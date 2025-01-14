@@ -47,15 +47,11 @@ def _future_policy_loss(
 @th.jit.script
 def masac_train(
     policy: RandomizedAttentionPolicy,
-    policy_target: RandomizedAttentionPolicy,
     critic1: CustomQFuncCritic,
     critic2: CustomQFuncCritic,
-    critic1_target: CustomQFuncCritic,
-    critic2_target: CustomQFuncCritic,
     replay_batch: List[StateBuffer],
     alpha: float,
     gamma: float,
-    tau: float,
     policy_optim: th.optim.Optimizer,
     critic1_optim: th.optim.Optimizer,
     critic2_optim: th.optim.Optimizer,
@@ -87,15 +83,6 @@ def masac_train(
     policy_loss.backward()
     policy_optim.step()
 
-    with th.no_grad():
-        for param, target_param in zip(policy.parameters(), policy_target.parameters()):
-            target_param.data = tau * param.data + (1 - tau) * target_param.data
-        for param, target_param in zip(critic1.parameters(), critic1_target.parameters()):
-            target_param.data = tau * param.data + (1 - tau) * target_param.data
-        for param, target_param in zip(critic2.parameters(), critic2_target.parameters()):
-            target_param.data = tau * param.data + (1 - tau) * target_param.data
-
-
 def train(
     env_wrapper,
     policy, policy_target,
@@ -124,6 +111,15 @@ def train(
     num_eval_episodes=5,
     save_video_every=10,
 ):
+    
+    with th.no_grad():
+        for param, target_param in zip(policy.parameters(), policy_target.parameters()):
+            target_param.data = tau * param.data + (1 - tau) * target_param.data
+        for param, target_param in zip(critic1.parameters(), critic1_target.parameters()):
+            target_param.data = tau * param.data + (1 - tau) * target_param.data
+        for param, target_param in zip(critic2.parameters(), critic2_target.parameters()):
+            target_param.data = tau * param.data + (1 - tau) * target_param.data
+
     pass
 
 
@@ -173,11 +169,8 @@ if __name__ == "__main__":
     policy_target.load_state_dict(policy.state_dict())
 
     policy = th.jit.script(policy)
-    policy_target = th.jit.script(policy_target)
     critic1 = th.jit.script(critic1)
     critic2 = th.jit.script(critic2)
-    critic1_target = th.jit.script(critic1_target)
-    critic2_target = th.jit.script(critic2_target)
 
     buffer = th.jit.script(ReplayBuffer(50000, device))
 
