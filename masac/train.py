@@ -125,3 +125,90 @@ def train(
     save_video_every=10,
 ):
     pass
+
+
+if __name__ == "__main__":
+    from masac.simple_spread import Scenario
+    from masac.env import RandomAgentCountEnv
+    from masac.actor import RandomizedAttentionPolicy
+    from masac.critic import CustomQFuncCritic
+    from masac.buffer import ReplayBuffer
+
+    device = "cpu"
+
+    env = RandomAgentCountEnv(
+        scenario_name=Scenario(),
+        agent_count_dict={1: 0.2, 3: 0.4, 5: 0.4},
+        seed=42,
+        device="cpu",
+    )
+
+    agent_dim = 2
+    landmark_dim = 2
+    action_dim = 2
+    hidden_dim = 32
+
+    # Critic networks
+    critic1 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    critic2 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    critic1_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    critic2_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    critic1_target.load_state_dict(critic1.state_dict())
+    critic2_target.load_state_dict(critic2.state_dict())
+
+    # Stochastic policy with tanh bounding
+    policy = RandomizedAttentionPolicy(
+        agent_dim=agent_dim,
+        landmark_dim=landmark_dim,
+        hidden_dim=hidden_dim,
+        action_dim=action_dim
+    ).to(device)
+
+    policy_target = RandomizedAttentionPolicy(
+        agent_dim=agent_dim,
+        landmark_dim=landmark_dim,
+        hidden_dim=hidden_dim,
+        action_dim=action_dim
+    ).to(device)
+    policy_target.load_state_dict(policy.state_dict())
+
+    policy = th.jit.script(policy)
+    policy_target = th.jit.script(policy_target)
+    critic1 = th.jit.script(critic1)
+    critic2 = th.jit.script(critic2)
+    critic1_target = th.jit.script(critic1_target)
+    critic2_target = th.jit.script(critic2_target)
+
+    buffer = th.jit.script(ReplayBuffer(50000, device))
+
+    train(
+        env_wrapper=env,
+        policy=policy,
+        policy_target=policy_target,
+        critic1=critic1,
+        critic1_target=critic1_target,
+        critic2=critic2,
+        critic2_target=critic2_target,
+        buffer=buffer,
+        agent_dim=agent_dim,
+        landmark_dim=landmark_dim,
+        action_dim=action_dim,
+        n_episodes=1000,
+        max_steps=25,
+        batch_size=32,
+        gamma=0.99,
+        lr_actor=1e-3,
+        lr_critic=1e-3,
+        tau=0.005,
+        alpha=0.2,            # can be float or nn.Parameter
+        learnable_alpha=False,
+        target_entropy=-4.0,  # e.g. - (n_agents*action_dim)
+        lr_alpha=1e-3,
+        device="cpu",
+        save_interval=100,
+        save_dir="checkpoints",
+        video_dir="videos",
+        eval_interval=100,
+        num_eval_episodes=5,
+        save_video_every=10,
+    )
