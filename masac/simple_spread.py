@@ -118,7 +118,7 @@ class Scenario(BaseScenario):
         for idx, other in enumerate(self.world.agents):
             if other == agent:
                 agent_idx = idx
-            pos.append(torch.concat((other.state.pos - agent.state.pos, other.state.vel), dim=-1))
+            pos.append(other.state.pos - agent.state.pos)
         return {
             "obs": torch.concat(obs, dim=0),
             "agent_states": torch.concat(pos, dim=0),
