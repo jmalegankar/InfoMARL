@@ -4,7 +4,6 @@
 
 import torch
 
-from vmas import render_interactively
 from vmas.simulator.core import Agent, Landmark, Sphere, World
 from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.utils import Color, ScenarioUtils
@@ -110,24 +109,32 @@ class Scenario(BaseScenario):
 
     def observation(self, agent: Agent):
         # get positions of all landmarks in this agent's reference frame
-        landmark_pos = []
+        obs = []
         for landmark in self.world.landmarks:  # world.entities:
-            landmark_pos.append(landmark.state.pos - agent.state.pos)
+            obs.append(torch.concat((landmark.state.pos - agent.state.pos, agent.state.vel), dim=-1))
         # distance to all other agents
-        other_pos = []
-        for other in self.world.agents:
-            if other != agent:
-                other_pos.append(other.state.pos - agent.state.pos)
-        return torch.cat(
-            [
-                agent.state.pos,
-                agent.state.vel,
-                *landmark_pos,
-                *(other_pos if self.obs_agents else []),
-            ],
-            dim=-1,
-        )
+        pos = []
+        agent_idx = 0
+        for idx, other in enumerate(self.world.agents):
+            if other == agent:
+                agent_idx = idx
+            pos.append(torch.concat((other.state.pos - agent.state.pos, other.state.vel), dim=-1))
+        return {
+            "obs": torch.concat(obs, dim=0),
+            "agent_states": torch.concat(pos, dim=0),
+            "idx": torch.tensor(agent_idx, device=self.world.device, dtype=torch.long),
+        }
 
 
 if __name__ == "__main__":
-    render_interactively(Scenario(), control_two_agents=True)
+    from vmas import make_env
+    env = make_env(
+        scenario=Scenario(),
+        num_envs=1,
+        n_agents=3,
+        continuous_actions=True,
+        device="cpu",
+        seed=42,
+        max_steps=100,
+    )
+    print(env.reset())

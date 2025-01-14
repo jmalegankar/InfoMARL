@@ -1,5 +1,7 @@
 import torch as th
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, Tuple, Union, List
+
+NoneFuture = th.jit.Future[None]
 
 @th.jit.script
 class StateBuffer:
@@ -8,25 +10,22 @@ class StateBuffer:
         obs: Dict[str, th.Tensor],
         reward: th.Tensor,
         done: th.Tensor,
-        next_obs: th.Tensor,
+        next_obs: Dict[str, th.Tensor],
         action: th.Tensor,
-        agent_idx: int,
     ):
         self.obs = obs
         self.reward = reward
         self.done = done
         self.next_obs = next_obs
         self.action = action
-        self.agent_idx = agent_idx
     
     def to(self, device: th.device):
         self.obs = {k: v.to(device) for k, v in self.obs.items()}
         self.reward = self.reward.to(device)
         self.done = self.done.to(device)
-        self.next_obs = self.next_obs.to(device)
+        self.next_obs = {k: v.to(device) for k, v in self.next_obs.items()}
         self.action = self.action.to(device)
         return self
-
 
 class ReplayBuffer(th.nn.Module):
     def __init__(
@@ -44,7 +43,6 @@ class ReplayBuffer(th.nn.Module):
                 done=th.zeros(0, device=device),
                 next_obs=th.zeros(0, device=device),
                 action=th.zeros(0, device=device),
-                agent_idx=0,
             )
             for _ in range(max_size)
         )
@@ -52,49 +50,83 @@ class ReplayBuffer(th.nn.Module):
         self.size: int = 0
     
     @th.jit.export
-    def add(
+    def _add(
         self,
         obs: Dict[str, th.Tensor],
         reward: th.Tensor,
         done: th.Tensor,
-        next_obs: th.Tensor,
+        next_obs: Dict[str, th.Tensor],
         action: th.Tensor,
-        agent_idx: int,
+        idx: int,
     ) -> None:
-        self.buffer[self.idx].obs = obs
-        self.buffer[self.idx].reward = reward
-        self.buffer[self.idx].done = done
-        self.buffer[self.idx].next_obs = next_obs
-        self.buffer[self.idx].action = action
-        self.buffer[self.idx].agent_idx = agent_idx
-        self.idx = (self.idx + 1) % self.max_size
-        self.size = min(self.size + 1, self.max_size)
+        self.buffer[idx].obs = obs
+        self.buffer[idx].reward = reward
+        self.buffer[idx].done = done
+        self.buffer[idx].next_obs = next_obs
+        self.buffer[idx].action = action
     
     @th.jit.export
-    def sample(self, batch_size: int, device: Optional[th.device] = None) -> Tuple[Dict[str, th.Tensor], th.Tensor, th.Tensor, Dict[str, th.Tensor], th.Tensor, th.Tensor]:
+    def add(
+        self,
+        obs: Union[List[Dict[str, th.Tensor]], Dict[str, th.Tensor]],
+        reward: Union[List[th.Tensor], th.Tensor],
+        done: Union[List[th.Tensor], th.Tensor],
+        next_obs: Union[List[Dict[str, th.Tensor]], Dict[str, th.Tensor]],
+        action: Union[List[th.Tensor], th.Tensor],
+    ) -> None:
+        if isinstance(obs, Dict[str, th.Tensor]) and isinstance(reward, th.Tensor) and isinstance(done, th.Tensor) and isinstance(next_obs, Dict[str, th.Tensor]) and isinstance(action, th.Tensor):
+            self.idx = (self.idx + 1) % self.max_size
+            self.size = min(self.size + 1, self.max_size)
+            self._add(
+                obs=obs,
+                reward=reward,
+                done=done,
+                next_obs=next_obs,
+                action=action,
+                idx=self.idx,
+            )
+            return
+        elif isinstance(obs, list) and isinstance(reward, list) and isinstance(done, list) and isinstance(next_obs, list) and isinstance(action, list):
+            futures: List[NoneFuture] = []
+            for i in range(len(obs)):
+                self.idx = (self.idx + 1) % self.max_size
+                self.size = min(self.size + 1, self.max_size)
+                futures.append(
+                    th.jit.fork(
+                        self._add,
+                        obs=obs[i],
+                        reward=reward[i],
+                        done=done[i],
+                        next_obs=next_obs[i],
+                        action=action[i],
+                        idx=self.idx,
+                    )
+                )
+            for future in futures:
+                th.jit.wait(future)
+        
+    @th.jit.export
+    def sample(self, batch_size: int, device: Optional[th.device] = None) -> List[StateBuffer]:
         if batch_size > self.size:
             raise ValueError(f"Batch size {batch_size} is greater than buffer size {self.size}")
         if device is None:
             device = self.device
-        idxs: List[int] = th.randint(0, self.size, (batch_size,), dtype=th.long).tolist()
-        obs = {k: th.stack([self.buffer[idx].obs[k] for idx in idxs], dim=0) for k in self.buffer[0].obs.keys()}
-        reward = th.stack([self.buffer[idx].reward for idx in idxs], dim=0).to(device)
-        done = th.stack([self.buffer[idx].done for idx in idxs], dim=0).to(device)
-        next_obs = {k: th.stack([self.buffer[idx].next_obs for idx in idxs], dim=0).to(device) for k in self.buffer[0].obs.keys()}
-        action = th.stack([self.buffer[idx].action for idx in idxs], dim=0).to(device)
-        agent_idx = th.tensor([self.buffer[idx].agent_idx for idx in idxs], device=device)
-        return obs, reward, done, next_obs, action, agent_idx
+        idxs: List[int] = th.randint(0, self.size, (batch_size,), device=device).tolist()
+        return list(self.buffer[idx].to(device=device) for idx in idxs)
     
 
 if __name__ == '__main__':
     buffer = th.jit.script(ReplayBuffer(10, th.device('cpu')))
+    obs = []
+    reward = []
+    done = []
+    next_obs = []
+    action = []
     for i in range(15):
-        buffer.add(
-            obs={'obs': th.tensor([i], dtype=th.float32)},
-            reward=th.tensor(i, dtype=th.float32),
-            done=th.tensor(0, dtype=th.float32),
-            next_obs=th.tensor([i + 1], dtype=th.float32),
-            action=th.tensor(i, dtype=th.float32),
-            agent_idx=i,
-        )
+        obs.append({'obs': th.rand(3, 3)})
+        reward.append(th.rand(1))
+        done.append(th.rand(1))
+        next_obs.append({'obs': th.rand(3, 3)})
+        action.append(th.rand(1))
+    buffer.add(obs, reward, done, next_obs, action)
     print(buffer.sample(5, device=th.device('cuda')))
