@@ -3,3 +3,7 @@ logs/
 __pycache__/
 *.pyc
 models/
+*/checkpoints/
+*/checkpoints/*
+*/videos/
+*/save_dir/

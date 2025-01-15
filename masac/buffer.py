@@ -69,14 +69,12 @@ class ReplayBuffer(th.nn.Module):
     def add(
         self,
         obs: Union[List[Dict[str, th.Tensor]], Dict[str, th.Tensor]],
-        reward: Union[List[th.Tensor], th.Tensor],
-        done: Union[List[th.Tensor], th.Tensor],
-        next_obs: Union[List[Dict[str, th.Tensor]], Dict[str, th.Tensor]],
         action: Union[List[th.Tensor], th.Tensor],
+        reward: Union[List[th.Tensor], th.Tensor],
+        next_obs: Union[List[Dict[str, th.Tensor]], Dict[str, th.Tensor]],
+        done: Union[List[th.Tensor], th.Tensor],
     ) -> None:
         if isinstance(obs, Dict[str, th.Tensor]) and isinstance(reward, th.Tensor) and isinstance(done, th.Tensor) and isinstance(next_obs, Dict[str, th.Tensor]) and isinstance(action, th.Tensor):
-            self.idx = (self.idx + 1) % self.max_size
-            self.size = min(self.size + 1, self.max_size)
             self._add(
                 obs=obs,
                 reward=reward,
@@ -85,12 +83,12 @@ class ReplayBuffer(th.nn.Module):
                 action=action,
                 idx=self.idx,
             )
+            self.idx = (self.idx + 1) % self.max_size
+            self.size = min(self.size + 1, self.max_size)
             return
         elif isinstance(obs, list) and isinstance(reward, list) and isinstance(done, list) and isinstance(next_obs, list) and isinstance(action, list):
             futures: List[NoneFuture] = []
             for i in range(len(obs)):
-                self.idx = (self.idx + 1) % self.max_size
-                self.size = min(self.size + 1, self.max_size)
                 futures.append(
                     th.jit.fork(
                         self._add,
@@ -102,6 +100,8 @@ class ReplayBuffer(th.nn.Module):
                         idx=self.idx,
                     )
                 )
+                self.idx = (self.idx + 1) % self.max_size
+                self.size = min(self.size + 1, self.max_size)
             for future in futures:
                 th.jit.wait(future)
         

@@ -83,7 +83,6 @@ class RandomizedAttentionPolicy(nn.Module):
         temp_states, messages = self.initial_state_estimation(obs)
         mean, logstd = self.consensus(temp_states, obs, messages)
         actions, logp = self.tanh_normal_sample(mean, logstd)
-        obs['agent_states'][:, :, -self.action_dim:] = actions[obs['idx']]
         return actions, logp
 
 if __name__ == "__main__":

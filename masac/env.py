@@ -58,18 +58,18 @@ class RandomAgentCountEnv:
         self._render = value
     
     def step(self, actions):
-        obs, rewards, dones, infos = self.env.step(actions)
+        obs, rewards, done, infos = self.env.step(actions)
         if self._render:
             self.env.render()
         obs = {k: th.stack(tuple(o[k] for o in obs)) for k in obs[0].keys()}
         obs['rnd_nums'] = th.rand(self.current_num_agents, device=self.device, generator=self.rnd_rng)
-        return obs, th.stack(rewards), dones, infos
+        return obs, th.concat(rewards), done, infos
     
     def close(self):
         if self.env is not None:
             # Seems to be an issue pf pyglet not closing the window properly
             if self._render:
-                self.env._env.viewer.close()
+                self.env.viewer.close()
             self.env = None
     
     @property
@@ -91,15 +91,16 @@ if __name__ == '__main__':
     obs = env.reset()
     for _ in range(100):
         actions =  torch.from_numpy(
-            np.stack(tuple(np.stack(env.env.action_space.sample()) for _ in range(env.num_envs)), axis=1)
-        )
+            np.stack(env.env.action_space.sample())
+        ).unsqueeze(1)
         obs, rewards, dones, infos = env.step(actions)
         time.sleep(0.01)
     print(obs)
+    env.close()
     obs = env.reset()
     for _ in range(100):
         actions =  torch.from_numpy(
-            np.stack(tuple(np.stack(env.env.action_space.sample()) for _ in range(env.num_envs)), axis=1)
-        )
+            np.stack(env.env.action_space.sample())
+        ).unsqueeze(1)
         obs, rewards, dones, infos = env.step(actions)
         time.sleep(0.01)
