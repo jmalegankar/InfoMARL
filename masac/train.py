@@ -28,13 +28,14 @@ def _future_critic_loss(
     critic2: CriticImpl,
     state_buffer: StateBuffer,
     gamma: float,
+    alpha: float,
 ) -> th.Tensor:
     with th.no_grad():
-        next_actions, _ = policy.sample_actions_and_logp(state_buffer.next_obs)
+        next_actions,logp = policy.sample_actions_and_logp(state_buffer.next_obs)
         next_q1 = critic1.forward(state_buffer.next_obs, next_actions)
         next_q2 = critic2.forward(state_buffer.next_obs, next_actions)
         next_q = th.minimum(next_q1, next_q2) # => [n_agents]
-        target_q = state_buffer.reward + (~state_buffer.done) * gamma * next_q
+        target_q = state_buffer.reward + (~state_buffer.done) * gamma * (next_q - alpha*logp) # => [n_agents]
     q1 = critic1.forward(state_buffer.obs, state_buffer.action).view(-1)
     q2 = critic2.forward(state_buffer.obs, state_buffer.action).view(-1)
     critic1_loss = F.mse_loss(q1, target_q, reduction="none").view(-1)
@@ -65,10 +66,11 @@ def critic_loss(
     critic2: CriticImpl,
     replay_batch: List[StateBuffer],
     gamma: float,
+    alpha: float,
 ) -> th.Tensor:
     futures = th.jit.annotate(List[TensorFuture], [])
     for state_buffer in replay_batch:
-        futures.append(th.jit.fork(_future_critic_loss, policy, critic1, critic2, state_buffer, gamma))
+        futures.append(th.jit.fork(_future_critic_loss, policy, critic1, critic2, state_buffer, gamma, alpha))
     
     critic_loss = th.mean(
         th.cat([th.jit.wait(future) for future in futures], dim=0)
@@ -109,7 +111,7 @@ def masac_train(
     critic1_optim.zero_grad()
     critic2_optim.zero_grad()
 
-    critic_loss_val = critic_loss(policy, critic1, critic2, replay_batch, gamma)
+    critic_loss_val = critic_loss(policy, critic1, critic2, replay_batch, gamma, alpha)
 
     critic_loss_val.backward()
     critic1_optim.step()
