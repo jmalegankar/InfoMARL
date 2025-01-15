@@ -58,7 +58,7 @@ class RandomizedAttentionPolicy(nn.Module):
     @th.jit.export
     def _create_mask(self, rnd_nums: th.Tensor, rnd: th.Tensor):
         mask = (rnd_nums.unsqueeze(0) > rnd).logical_or(rnd_nums.unsqueeze(1) > rnd)  # Compare as per M_ij definition
-        return mask.float()
+        return mask
 
     ################################
     # consensus
