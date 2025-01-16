@@ -1,4 +1,3 @@
-# train_mlp_single.py
 import torch as th
 import torch.nn.functional as F
 from typing import List, Tuple, Dict
@@ -7,9 +6,8 @@ import imageio
 
 from masac.buffer import ReplayBuffer, StateBuffer
 from masac.env import RandomAgentCountEnv
-from masac.simple_spread import Scenario  # or scenario_name="simple_spread"
+from masac.simple_spread import Scenario  
 
-# Import the new MLP actor/critic
 from actor_mlp import MLPActor
 from critic_mlp import MLPQCritic
 
@@ -34,11 +32,6 @@ def _future_critic_loss(
     gamma: float,
     alpha: float,
 ) -> th.Tensor:
-    """
-    For each transition, compute the soft Q backup target:
-        target = r + gamma * (min(Q1,Q2)(s', a') - alpha*logp(a'))
-    Then compute MSE for Q1,Q2 to that target.
-    """
     with th.no_grad():
         next_actions, logp_next = policy.sample_actions_and_logp(state_buffer.next_obs)
         q1_next = critic1.forward(state_buffer.next_obs, next_actions)
@@ -61,10 +54,7 @@ def _future_policy_loss(
     state_buffer: StateBuffer,
     alpha: float,
 ) -> th.Tensor:
-    """
-    For the policy update, we do:
-        L_pi = E[alpha * logp(a) - min(Q1,Q2)(s,a)]
-    """
+    
     actions, logp = policy.sample_actions_and_logp(state_buffer.obs)
     q1 = critic1.forward(state_buffer.obs, actions)
     q2 = critic2.forward(state_buffer.obs, actions)
@@ -82,9 +72,7 @@ def critic_loss(
     gamma: float,
     alpha: float,
 ) -> th.Tensor:
-    """
-    Sums up the critic loss over the batch (forking each transition in parallel for speed).
-    """
+
     futures = th.jit.annotate(List[TensorFuture], [])
     for state_buffer in replay_batch:
         futures.append(th.jit.fork(_future_critic_loss, policy, critic1, critic2, state_buffer, gamma, alpha))
@@ -100,9 +88,7 @@ def policy_loss(
     replay_batch: List[StateBuffer],
     alpha: float,
 ) -> th.Tensor:
-    """
-    Sums up the policy loss over the batch.
-    """
+
     futures = th.jit.annotate(List[TensorFuture], [])
     for state_buffer in replay_batch:
         futures.append(th.jit.fork(_future_policy_loss, policy, critic1, critic2, state_buffer, alpha))
@@ -121,9 +107,7 @@ def masac_train(
     critic1_optim: th.optim.Optimizer,
     critic2_optim: th.optim.Optimizer,
 ) -> None:
-    """
-    Single training iteration: update critics, then update policy.
-    """
+
     critic1_optim.zero_grad()
     critic2_optim.zero_grad()
     c_loss = critic_loss(policy, critic1, critic2, replay_batch, gamma, alpha)
@@ -162,9 +146,7 @@ def train(
     num_eval_episodes=5,
     device="cpu",
 ):
-    """
-    Main training loop using the same style as your original train.py.
-    """
+
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(video_dir, exist_ok=True)
 
@@ -244,7 +226,10 @@ def train(
                 for _ in range(num_eval_episodes):
                     frames = []
                     obs = env_wrapper.reset()
-                    frames.append(env_wrapper.env.render(mode="rgb_array"))
+                    try:
+                        frames.append(env_wrapper.env.render(mode="rgb_array"))
+                    except:
+                        pass
                     done = False
                     ep_reward = 0.0
                     while not done:
@@ -252,7 +237,10 @@ def train(
                         next_obs, rewards, done, _ = env_wrapper.step(actions.unsqueeze(1))
                         ep_reward += rewards.mean().item()
                         obs = next_obs
-                        frames.append(env_wrapper.env.render(mode="rgb_array"))
+                        try:
+                            frames.append(env_wrapper.env.render(mode="rgb_array"))
+                        except:
+                            pass
 
                     total_reward += ep_reward
 
@@ -263,7 +251,6 @@ def train(
     print("Training complete.")
 
 if __name__ == "__main__":
-    # Example: single-agent random env config => only 1 agent
 
     device = "cpu"
     
@@ -272,10 +259,10 @@ if __name__ == "__main__":
         agent_count_dict={1: 1.0},
         seed=42,
         device="cpu",
-        max_steps=100,
+        max_steps=200,
     )
 
-    # Build MLP actor and critics
+
     agent_dim = 2
     landmark_dim = 2
     action_dim = 2
@@ -293,13 +280,11 @@ if __name__ == "__main__":
     critic1_target.load_state_dict(critic1.state_dict())
     critic2_target.load_state_dict(critic2.state_dict())
 
-    # Wrap in torchscript if desired
     policy = th.jit.script(policy)
     critic1 = th.jit.script(critic1)
     critic2 = th.jit.script(critic2)
 
-    # Replay buffer
-    buffer = th.jit.script(ReplayBuffer(100000, device))
+    buffer = th.jit.script(ReplayBuffer(50000, device))
 
     train(
         env_wrapper=env,

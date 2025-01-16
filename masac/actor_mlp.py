@@ -1,4 +1,3 @@
-# actor_mlp.py
 import math
 import torch as th
 import torch.nn as nn
@@ -15,7 +14,7 @@ class MLPActor(nn.Module):
     ):
         super().__init__()
 
-        self.input_dim = agent_dim + landmark_dim  # Adjust if your obs includes velocities, etc.
+        self.input_dim = agent_dim + landmark_dim  
 
         self.net = nn.Sequential(
             nn.Linear(self.input_dim, hidden_dim),
@@ -44,7 +43,7 @@ class MLPActor(nn.Module):
         pre_tanh = mean + std * eps
         actions = th.tanh(pre_tanh)
 
-        # Diagonal Gaussian log-prob
+        
         var = std.pow(2)
         log_prob_gauss = -0.5 * (
             ((pre_tanh - mean).pow(2) / (var + 1e-8))
@@ -53,7 +52,6 @@ class MLPActor(nn.Module):
         )
         log_prob_gauss = log_prob_gauss.sum(dim=-1, keepdim=True)
 
-        # Tanh correction: 2 * (log(2) - x - softplus(-2x))
         correction = 2.0 * (
             math.log(2.0) - pre_tanh - F.softplus(-2.0 * pre_tanh)
         )
