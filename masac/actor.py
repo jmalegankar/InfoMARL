@@ -15,13 +15,15 @@ class RandomizedAttentionPolicy(nn.Module):
 
         # Initial attention
         self.init_embed = nn.Linear(landmark_dim + action_dim, hidden_dim)
-        self.init_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=4, batch_first=True)
+        self.init_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=1, batch_first=True)
 
         # Consensus attention
-        self.consensus_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=4, batch_first=True)
+        self.consensus_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=1, batch_first=True)
 
         self.mean_layer = nn.Linear(hidden_dim, action_dim)
         self.logstd_layer = nn.Linear(hidden_dim, action_dim)
+
+        self.relu = nn.ReLU()
     
     @th.jit.export
     def tanh_normal_sample(self, mean, log_std):
@@ -49,10 +51,9 @@ class RandomizedAttentionPolicy(nn.Module):
     ################################
     @th.jit.export
     def initial_state_estimation(self, obs: Dict[str, th.Tensor]):
-        embed = self.init_embed(obs['obs'])  # => [n_agents, n_landmarks, hidden_dim]
-        att_out, _ = self.init_attention(embed, embed, embed, need_weights=False)
-        temp_state = att_out  # => [n_agents, n_landmarks, hidden_dim]
-        message = att_out.mean(dim=1)  # => [n_agents, hidden_dim]
+        embed = self.relu(self.init_embed(obs['obs']))  # => [n_agents, n_landmarks, hidden_dim]
+        temp_state, _ = self.init_attention(embed, embed, embed, need_weights=False)
+        message = temp_state.mean(dim=1)  # => [n_agents, hidden_dim]
         return temp_state, message
     
     @th.jit.export
@@ -73,7 +74,7 @@ class RandomizedAttentionPolicy(nn.Module):
             self.consensus_attention(temp_states[i], messages, messages, attn_mask=mask[i], need_weights=False)[0] \
             for i in range(mask.size(0))
         ))
-        attn_out = attn_out.mean(dim=1)
+        attn_out = attn_out.mean(dim=1)  # => [n_agents, hidden_dim]
         mean = self.mean_layer(attn_out)
         logstd = self.logstd_layer(attn_out)
         return mean, logstd

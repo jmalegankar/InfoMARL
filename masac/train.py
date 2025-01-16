@@ -8,6 +8,8 @@ import imageio
 import os
 from typing import List, Tuple, Dict
 
+from tqdm import tqdm
+
 TensorFuture = th.jit.Future[th.Tensor]
 
 
@@ -144,11 +146,12 @@ def train(
     tau=0.005,
     alpha=0.2,
     train_interval=100,
+    train_epochs=3,
+    start_training_after=0,
     save_interval=100,
     save_dir="checkpoints",
     video_dir="videos",
     eval_interval=100,
-    num_eval_episodes=10,
     device="cpu",
 ):
     os.makedirs(save_dir, exist_ok=True)
@@ -162,7 +165,7 @@ def train(
 
     num_timesteps = 0
 
-    for episode in range(n_episodes):
+    for episode in tqdm(range(n_episodes)):
         policy.eval()
         critic1.eval()
         critic2.eval()
@@ -182,22 +185,23 @@ def train(
 
             num_timesteps += num_agents
 
-            if buffer.size >= batch_size and num_timesteps % train_interval == 0:
-                replay_batch = buffer.sample(batch_size, device=device)
+            if num_timesteps >= start_training_after and num_timesteps % train_interval == 0:
                 policy.train()
                 critic1.train()
                 critic2.train()
-                masac_train(
-                    policy,
-                    critic1,
-                    critic2,
-                    replay_batch,
-                    alpha,
-                    gamma,
-                    policy_optim,
-                    critic1_optim,
-                    critic2_optim,
-                )
+                for _ in range(train_epochs):
+                    replay_batch = buffer.sample(batch_size, device=device)
+                    masac_train(
+                        policy,
+                        critic1,
+                        critic2,
+                        replay_batch,
+                        alpha,
+                        gamma,
+                        policy_optim,
+                        critic1_optim,
+                        critic2_optim,
+                    )
                 policy.eval()
                 critic1.eval()
                 critic2.eval()
@@ -223,16 +227,15 @@ def train(
         if episode % eval_interval == 0:
             with th.no_grad():
                 episode_reward = 0
-                for _ in range(num_eval_episodes):
-                    frames = []
-                    obs = env_wrapper.reset()
+                frames = []
+                obs = env_wrapper.reset()
+                frames.append(env_wrapper.env.render(mode="rgb_array"))
+                done = False
+                while not done:
+                    actions, _ = policy.sample_actions_and_logp(obs)
+                    obs, rewards, done, _ = env_wrapper.step(actions.unsqueeze(1))
+                    episode_reward += rewards.mean().item()
                     frames.append(env_wrapper.env.render(mode="rgb_array"))
-                    done = False
-                    while not done:
-                        actions, _ = policy.sample_actions_and_logp(obs)
-                        obs, rewards, done, _ = env_wrapper.step(actions.unsqueeze(1))
-                        episode_reward += rewards.mean().item()
-                        frames.append(env_wrapper.env.render(mode="rgb_array"))
                 
                 imageio.mimsave(os.path.join(video_dir, f"episode_{episode}.gif"), frames, fps=10)
 
@@ -254,13 +257,13 @@ if __name__ == "__main__":
         agent_count_dict={1: 1.0, 3: 0.0, 5: 0.0},
         seed=42,
         device="cpu",
-        max_steps=100,
+        max_steps=300,
     )
 
     agent_dim = 2
     landmark_dim = 2
     action_dim = 2
-    hidden_dim = 64
+    hidden_dim = 512
 
     # Critic networks
     critic1 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
@@ -282,7 +285,7 @@ if __name__ == "__main__":
     critic1 = th.jit.script(critic1)
     critic2 = th.jit.script(critic2)
 
-    buffer = th.jit.script(ReplayBuffer(50000, device))
+    buffer = th.jit.script(ReplayBuffer(500000, device))
 
     train(
         env_wrapper=env,
@@ -292,18 +295,19 @@ if __name__ == "__main__":
         critic2=critic2,
         critic2_target=critic2_target,
         buffer=buffer,
-        n_episodes=1000,
-        batch_size=256,
+        n_episodes=10000,
+        batch_size=1000,
         gamma=0.95,
-        lr_actor=3e-4,
+        lr_actor=1e-3,
         lr_critic=1e-3,
-        tau=0.001,
-        alpha=0.01,
-        train_interval=64,
+        tau=0.01,
+        alpha=0.0,
+        train_interval=10000,
+        train_epochs=30,
+        start_training_after=50000,
         save_interval=100,
         save_dir="checkpoints",
         video_dir="videos",
-        eval_interval=10,
-        num_eval_episodes=10,
+        eval_interval=100,
         device=device,
     )

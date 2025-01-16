@@ -11,17 +11,18 @@ class CustomQFuncCritic(nn.Module):
         self.hidden_dim = hidden_dim
 
         self.fc = nn.Linear(agent_dim + action_dim + landmark_dim + action_dim, hidden_dim)
-        self.attention = nn.MultiheadAttention(hidden_dim, num_heads=4, batch_first=True)
+        self.attention = nn.MultiheadAttention(hidden_dim, num_heads=1, batch_first=True)
         self.output_layer = nn.Linear(hidden_dim, 1)
+        self.relu = nn.ReLU()
 
     @th.jit.export
     def forward(self, obs:Dict[str, th.Tensor], action:th.Tensor):
         all_features = th.cat((obs['agent_states'], obs['obs'], action.repeat(obs['agent_states'].size(0), 1, 1)), dim=-1) # => [n_agents, n_landmarks, agent_dim + action_dim + landmark_dim + action_dim]
-        all_features = self.fc(all_features)
+        all_features = self.relu(self.fc(all_features)) # => [n_agents, n_landmarks, hidden_dim]
         attn_output, _ = self.attention(all_features, all_features, all_features)
-        aggregated = attn_output.mean(dim=1)  # => shape [1, hidden_dim]
-        q_value = self.output_layer(aggregated)  # => shape [1,1]
-        return q_value.squeeze()
+        aggregated = attn_output.mean(dim=1) # => [n_agents, hidden_dim]
+        q_value = self.output_layer(aggregated) # => [n_agents, 1]
+        return q_value.squeeze() # => [n_agents]
 
 if __name__ == "__main__":
     from masac.simple_spread import Scenario
