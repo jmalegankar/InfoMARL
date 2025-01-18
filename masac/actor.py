@@ -13,17 +13,22 @@ class RandomizedAttentionPolicy(nn.Module):
         self.action_dim = action_dim
         self.device = device
 
-        # Initial attention
-        self.init_embed = nn.Linear(landmark_dim + action_dim, hidden_dim)
-        self.init_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=1, batch_first=True)
+        self.relu = nn.ReLU()
+        self.logsoftmax = nn.LogSoftmax(dim=-2)
 
-        # Consensus attention
-        self.consensus_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=1, batch_first=True)
+        # Initial state estimation
+        self.embed1 = nn.Linear(landmark_dim + action_dim, hidden_dim)
+        self.embed2 = nn.Linear(hidden_dim, hidden_dim)
+        self.init_score = nn.Linear(hidden_dim, hidden_dim)
+
+        # State consensus
+        self.concencus1 = nn.Linear(hidden_dim, hidden_dim)
+        self.concencus2 = nn.Linear(hidden_dim, hidden_dim)
+        self.concencus_score = nn.Linear(hidden_dim, hidden_dim)
 
         self.mean_layer = nn.Linear(hidden_dim, action_dim)
         self.logstd_layer = nn.Linear(hidden_dim, action_dim)
 
-        self.relu = nn.ReLU()
     
     @th.jit.export
     def tanh_normal_sample(self, mean, log_std):
@@ -51,15 +56,23 @@ class RandomizedAttentionPolicy(nn.Module):
     ################################
     @th.jit.export
     def initial_state_estimation(self, obs: Dict[str, th.Tensor]):
-        embed = self.relu(self.init_embed(obs['obs']))  # => [n_agents, n_landmarks, hidden_dim]
-        temp_state, _ = self.init_attention(embed, embed, embed, need_weights=False)
-        message = temp_state.mean(dim=1)  # => [n_agents, hidden_dim]
-        return temp_state, message
+        embed = self.relu(self.embed2(self.relu(self.embed1(obs['obs']))))  # => [n_agents, n_landmarks, hidden_dim]
+        score = self.logsoftmax(self.init_score(embed))  # => [n_agents, n_landmarks, hidden_dim]
+        temp_state = embed + score  # => [n_agents, n_landmarks, hidden_dim]
+        message = temp_state.mean(dim=-2)  # => [n_agents, hidden_dim]
+        return temp_state, message # => [n_agents, n_landmarks, hidden_dim], [n_agents, hidden_dim]
     
     @th.jit.export
     def _create_mask(self, rnd_nums: th.Tensor, rnd: th.Tensor):
-        mask = (rnd_nums.unsqueeze(0) > rnd).logical_or(rnd_nums.unsqueeze(1) > rnd)  # Compare as per M_ij definition
-        return mask
+        mask = ~(rnd_nums < rnd)  # Compare as per M_ij definition
+        return mask.view(-1) # => [n_agents]
+    
+    @th.jit.export
+    def _get_scored_messages(self, messages: th.Tensor, idx: int, rnd: th.Tensor):
+        mask = self._create_mask(rnd, rnd[idx])  # => [n_agents]
+        messages = messages[mask]  # => [n_agents, hidden_dim]
+        messages += self.logsoftmax(self.concencus_score(messages))  # => [n_agents, hidden_dim]
+        return messages.sum(dim=-2)  # => [hidden_dim]
 
     ################################
     # consensus
@@ -68,15 +81,13 @@ class RandomizedAttentionPolicy(nn.Module):
     def consensus(self, temp_states: th.Tensor, obs: Dict[str, th.Tensor], messages: th.Tensor):
         rnd_nums = obs['rnd_nums']  # => [n_agents]
         idx = obs['idx'] # => [n_agents]
-        rnd = rnd_nums[idx] # => [n_agents]
-        mask = th.stack(list(self._create_mask(rnd_nums, r) for r in rnd))  # => [n_agents, n_agents, n_agents]
-        attn_out = th.stack(list(
-            self.consensus_attention(temp_states[i], messages, messages, attn_mask=mask[i], need_weights=False)[0] \
-            for i in range(mask.size(0))
-        ))
-        attn_out = attn_out.mean(dim=1)  # => [n_agents, hidden_dim]
-        mean = self.mean_layer(attn_out)
-        logstd = self.logstd_layer(attn_out)
+        rnd = rnd_nums[idx].view(-1) # => [n_agents]
+        messages = self.concencus2(self.relu(self.concencus1(messages)))  # => [n_agents, hidden_dim]
+        out = temp_states.mean(dim=-2) + th.stack(
+            [self._get_scored_messages(messages, i, rnd) for i in range(rnd.size(0))],
+        ) # => [n_agents, hidden_dim]
+        mean = self.mean_layer(out)
+        logstd = self.logstd_layer(out)
         return mean, logstd
     
     @th.jit.export

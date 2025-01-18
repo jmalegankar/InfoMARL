@@ -257,13 +257,13 @@ if __name__ == "__main__":
         agent_count_dict={1: 1.0, 3: 0.0, 5: 0.0},
         seed=42,
         device="cpu",
-        max_steps=300,
+        max_steps=100,
     )
 
     agent_dim = 2
     landmark_dim = 2
     action_dim = 2
-    hidden_dim = 512
+    hidden_dim = 128
 
     # Critic networks
     critic1 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
@@ -295,19 +295,19 @@ if __name__ == "__main__":
         critic2=critic2,
         critic2_target=critic2_target,
         buffer=buffer,
-        n_episodes=10000,
-        batch_size=1000,
-        gamma=0.95,
+        n_episodes=1000,
+        batch_size=300,
+        gamma=0.99,
         lr_actor=1e-3,
         lr_critic=1e-3,
         tau=0.01,
         alpha=0.0,
-        train_interval=10000,
-        train_epochs=30,
-        start_training_after=50000,
+        train_interval=300,
+        train_epochs=1,
+        start_training_after=5000,
         save_interval=100,
         save_dir="checkpoints",
         video_dir="videos",
-        eval_interval=100,
+        eval_interval=10,
         device=device,
     )

@@ -11,16 +11,18 @@ class CustomQFuncCritic(nn.Module):
         self.hidden_dim = hidden_dim
 
         self.fc = nn.Linear(agent_dim + action_dim + landmark_dim + action_dim, hidden_dim)
-        self.attention = nn.MultiheadAttention(hidden_dim, num_heads=1, batch_first=True)
+        self.score = nn.Linear(hidden_dim, hidden_dim)
         self.output_layer = nn.Linear(hidden_dim, 1)
         self.relu = nn.ReLU()
+        self.logsoftmax = nn.LogSoftmax(dim=-2)
 
     @th.jit.export
     def forward(self, obs:Dict[str, th.Tensor], action:th.Tensor):
         all_features = th.cat((obs['agent_states'], obs['obs'], action.repeat(obs['agent_states'].size(0), 1, 1)), dim=-1) # => [n_agents, n_landmarks, agent_dim + action_dim + landmark_dim + action_dim]
         all_features = self.relu(self.fc(all_features)) # => [n_agents, n_landmarks, hidden_dim]
-        attn_output, _ = self.attention(all_features, all_features, all_features)
-        aggregated = attn_output.mean(dim=1) # => [n_agents, hidden_dim]
+        all_features += self.logsoftmax(self.score(all_features)) # => [n_agents, n_landmarks, hidden_dim]
+        aggregated = all_features.mean(dim=-2) # => [n_agents, hidden_dim]
+        aggregated = self.relu(aggregated)
         q_value = self.output_layer(aggregated) # => [n_agents, 1]
         return q_value.squeeze() # => [n_agents]
 
