@@ -13,18 +13,17 @@ class RandomizedAttentionPolicy(nn.Module):
         self.action_dim = action_dim
         self.device = device
 
-        self.relu = nn.ReLU()
-        self.logsoftmax = nn.LogSoftmax(dim=-2)
+        self.relu = nn.LeakyReLU(0.2)
+        self.sigmoid = nn.Sigmoid()
 
-        # Initial state estimation
-        self.embed1 = nn.Linear(landmark_dim + action_dim, hidden_dim)
-        self.embed2 = nn.Linear(hidden_dim, hidden_dim)
-        self.init_score = nn.Linear(hidden_dim, hidden_dim)
+        # Initial state estimation using GAT
+        self.embed = nn.Linear(landmark_dim + action_dim, hidden_dim)
+        self.init_attn = nn.MultiheadAttention(hidden_dim, 1, batch_first=True)
+        self.msg_layer = nn.Linear(hidden_dim, hidden_dim)
+
 
         # State consensus
-        self.concencus1 = nn.Linear(hidden_dim, hidden_dim)
-        self.concencus2 = nn.Linear(hidden_dim, hidden_dim)
-        self.concencus_score = nn.Linear(hidden_dim, hidden_dim)
+        self.consensus_attn = nn.MultiheadAttention(hidden_dim, 1, batch_first=True)
 
         self.mean_layer = nn.Linear(hidden_dim, action_dim)
         self.logstd_layer = nn.Linear(hidden_dim, action_dim)
@@ -56,24 +55,17 @@ class RandomizedAttentionPolicy(nn.Module):
     ################################
     @th.jit.export
     def initial_state_estimation(self, obs: Dict[str, th.Tensor]):
-        embed = self.relu(self.embed2(self.relu(self.embed1(obs['obs']))))  # => [n_agents, n_landmarks, hidden_dim]
-        score = self.logsoftmax(self.init_score(embed))  # => [n_agents, n_landmarks, hidden_dim]
-        temp_state = embed + score  # => [n_agents, n_landmarks, hidden_dim]
-        message = temp_state.mean(dim=-2)  # => [n_agents, hidden_dim]
-        return temp_state, message # => [n_agents, n_landmarks, hidden_dim], [n_agents, hidden_dim]
+        embed = self.relu(self.embed(obs['obs']))  # => [n_agents, n_landmarks, hidden_dim]
+        temp_state, _ = self.init_attn(embed, embed, embed, need_weights=False)  # => [n_agents, n_landmarks, hidden_dim]
+        messages = self.sigmoid(self.msg_layer(temp_state.mean(dim=-2)))  # => [n_agents, n_landmarks, hidden_dim]
+        return temp_state, messages # => [n_agents, n_landmarks, hidden_dim], [n_agents, hidden_dim]
+
     
     @th.jit.export
     def _create_mask(self, rnd_nums: th.Tensor, rnd: th.Tensor):
-        mask = ~(rnd_nums < rnd)  # Compare as per M_ij definition
-        return mask.view(-1) # => [n_agents]
-    
-    @th.jit.export
-    def _get_scored_messages(self, messages: th.Tensor, idx: int, rnd: th.Tensor):
-        mask = self._create_mask(rnd, rnd[idx])  # => [n_agents]
-        messages = messages[mask]  # => [n_agents, hidden_dim]
-        messages += self.logsoftmax(self.concencus_score(messages))  # => [n_agents, hidden_dim]
-        return messages.sum(dim=-2)  # => [hidden_dim]
-
+        mask = (rnd_nums.unsqueeze(0) > rnd).logical_or(rnd_nums.unsqueeze(1) > rnd)  # Compare as per M_ij definition
+        return mask
+        
     ################################
     # consensus
     ################################
@@ -82,10 +74,10 @@ class RandomizedAttentionPolicy(nn.Module):
         rnd_nums = obs['rnd_nums']  # => [n_agents]
         idx = obs['idx'] # => [n_agents]
         rnd = rnd_nums[idx].view(-1) # => [n_agents]
-        messages = self.concencus2(self.relu(self.concencus1(messages)))  # => [n_agents, hidden_dim]
-        out = temp_states.mean(dim=-2) + th.stack(
-            [self._get_scored_messages(messages, i, rnd) for i in range(rnd.size(0))],
-        ) # => [n_agents, hidden_dim]
+        out = th.stack(
+            [self.consensus_attn(temp_states[i], messages, messages, attn_mask=self._create_mask(rnd, rnd[i]), need_weights=False)[0].mean(dim=-2) for i in range(temp_states.size(0))]
+        )  # => [n_agents, hidden_dim]
+        out = self.relu(out)
         mean = self.mean_layer(out)
         logstd = self.logstd_layer(out)
         return mean, logstd

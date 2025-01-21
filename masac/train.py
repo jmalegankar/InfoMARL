@@ -247,6 +247,7 @@ if __name__ == "__main__":
     from masac.simple_spread import Scenario
     from masac.env import RandomAgentCountEnv
     from masac.actor import RandomizedAttentionPolicy
+    from masac.actor_mlp import MLPActor
     from masac.critic import CustomQFuncCritic
     from masac.buffer import ReplayBuffer
 
@@ -295,19 +296,19 @@ if __name__ == "__main__":
         critic2=critic2,
         critic2_target=critic2_target,
         buffer=buffer,
-        n_episodes=1000,
+        n_episodes=10000,
         batch_size=300,
         gamma=0.99,
-        lr_actor=1e-3,
+        lr_actor=3e-3,
         lr_critic=1e-3,
         tau=0.01,
-        alpha=0.0,
+        alpha=0.2,
         train_interval=300,
         train_epochs=1,
         start_training_after=5000,
-        save_interval=100,
+        save_interval=1000,
         save_dir="checkpoints",
         video_dir="videos",
-        eval_interval=10,
+        eval_interval=100,
         device=device,
     )
