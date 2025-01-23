@@ -161,8 +161,6 @@ def train(
     critic1_optim = th.optim.Adam(critic1.parameters(), lr=lr_critic)
     critic2_optim = th.optim.Adam(critic2.parameters(), lr=lr_critic)
     
-    os.makedirs("save_dir", exist_ok=True)
-
     num_timesteps = 0
 
     for episode in tqdm(range(n_episodes)):
@@ -255,7 +253,7 @@ if __name__ == "__main__":
 
     env = RandomAgentCountEnv(
         scenario_name=Scenario(),
-        agent_count_dict={1: 1.0, 3: 0.0, 5: 0.0},
+        agent_count_dict={1: 0.3, 3: 0.35, 5: 0.35},
         seed=42,
         device="cpu",
         max_steps=100,
@@ -264,7 +262,7 @@ if __name__ == "__main__":
     agent_dim = 2
     landmark_dim = 2
     action_dim = 2
-    hidden_dim = 128
+    hidden_dim = 256
 
     # Critic networks
     critic1 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
@@ -296,16 +294,16 @@ if __name__ == "__main__":
         critic2=critic2,
         critic2_target=critic2_target,
         buffer=buffer,
-        n_episodes=10000,
-        batch_size=300,
+        n_episodes=100000,
+        batch_size=100,
         gamma=0.99,
-        lr_actor=3e-3,
-        lr_critic=1e-3,
+        lr_actor=3e-4,
+        lr_critic=1e-4,
         tau=0.01,
-        alpha=0.2,
-        train_interval=300,
-        train_epochs=1,
-        start_training_after=5000,
+        alpha=0.693,
+        train_interval=900,
+        train_epochs=3,
+        start_training_after=15000,
         save_interval=1000,
         save_dir="checkpoints",
         video_dir="videos",

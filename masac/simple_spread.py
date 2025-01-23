@@ -75,37 +75,62 @@ class Scenario(BaseScenario):
                 batch_index=env_index,
             )
 
+    # def reward(self, agent: Agent):
+    #     is_first = agent == self.world.agents[0]
+    #     if is_first:
+    #         # Agents are rewarded based on minimum agent distance to each landmark, penalized for collisions
+    #         self.rew = torch.zeros(
+    #             self.world.batch_dim,
+    #             device=self.world.device,
+    #             dtype=torch.float32,
+    #         )
+    #         for single_agent in self.world.agents:
+    #             for landmark in self.world.landmarks:
+    #                 closest = torch.min(
+    #                     torch.stack(
+    #                         [
+    #                             torch.linalg.vector_norm(
+    #                                 a.state.pos - landmark.state.pos, dim=1
+    #                             )
+    #                             for a in self.world.agents
+    #                         ],
+    #                         dim=-1,
+    #                     ),
+    #                     dim=-1,
+    #                 )[0]
+    #                 self.rew -= closest
+
+    #             if single_agent.collide:
+    #                 for a in self.world.agents:
+    #                     if a != single_agent:
+    #                         self.rew[self.world.is_overlapping(a, single_agent)] -= 1
+
+    #     return self.rew
+
     def reward(self, agent: Agent):
-        is_first = agent == self.world.agents[0]
-        if is_first:
-            # Agents are rewarded based on minimum agent distance to each landmark, penalized for collisions
-            self.rew = torch.zeros(
-                self.world.batch_dim,
-                device=self.world.device,
-                dtype=torch.float32,
-            )
-            for single_agent in self.world.agents:
-                for landmark in self.world.landmarks:
-                    closest = torch.min(
-                        torch.stack(
-                            [
-                                torch.linalg.vector_norm(
-                                    a.state.pos - landmark.state.pos, dim=1
-                                )
-                                for a in self.world.agents
-                            ],
-                            dim=-1,
-                        ),
-                        dim=-1,
-                    )[0]
-                    self.rew -= closest
+        # Agent reward is based on the distance to the closest landmark
+        rew = torch.zeros(
+            self.world.batch_dim,
+            device=self.world.device,
+            dtype=torch.float32,
+        )
+        # Negative distance to closest landmark
+        for landmark in self.world.landmarks:
+            rew -= torch.min(
+                torch.linalg.vector_norm(
+                    agent.state.pos - landmark.state.pos, dim=-1
+                ),
+                dim=-1,
+            )[0]
+        
+        # Penalize collisions
+        if agent.collide:
+            for a in self.world.agents:
+                if a != agent:
+                    rew[self.world.is_overlapping(a, agent)] -= 1
+        
+        return rew
 
-                if single_agent.collide:
-                    for a in self.world.agents:
-                        if a != single_agent:
-                            self.rew[self.world.is_overlapping(a, single_agent)] -= 1
-
-        return self.rew
 
     def observation(self, agent: Agent):
         # get positions of all landmarks in this agent's reference frame
