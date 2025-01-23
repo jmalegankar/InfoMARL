@@ -1,6 +1,7 @@
 import torch as th
 import torch.nn as nn
 from typing import Dict
+import torch.nn.functional as F
 
 class CustomQFuncCritic(nn.Module):
     def __init__(self, agent_dim, action_dim, landmark_dim, hidden_dim):
@@ -11,17 +12,36 @@ class CustomQFuncCritic(nn.Module):
         self.hidden_dim = hidden_dim
 
         self.fc = nn.Linear(agent_dim + action_dim + landmark_dim + action_dim, hidden_dim)
-        self.attention = nn.MultiheadAttention(hidden_dim, num_heads=4, batch_first=True)
+        self.conv = nn.Conv2d(
+            in_channels=1,
+            out_channels=hidden_dim, 
+            kernel_size=3,
+            padding=1
+        )
+        self.pool = nn.AdaptiveAvgPool2d((1,1))
+        
+        # self.attention = nn.MultiheadAttention(hidden_dim, num_heads=4, batch_first=True)
         self.output_layer = nn.Linear(hidden_dim, 1)
 
     @th.jit.export
     def forward(self, obs:Dict[str, th.Tensor], action:th.Tensor):
         all_features = th.cat((obs['agent_states'], obs['obs'], action.repeat(obs['agent_states'].size(0), 1, 1)), dim=-1) # => [n_agents, n_landmarks, agent_dim + action_dim + landmark_dim + action_dim]
         all_features = self.fc(all_features)
-        attn_output, _ = self.attention(all_features, all_features, all_features)
-        aggregated = attn_output.mean(dim=1)  # => shape [1, hidden_dim]
-        q_value = self.output_layer(aggregated)  # => shape [1,1]
-        return q_value.squeeze()
+        # attn_output, _ = self.attention(all_features, all_features, all_features)
+        all_features = all_features.unsqueeze(1)
+        # aggregated = attn_output.mean(dim=1)  # => shape [1, hidden_dim]
+        out = self.conv(all_features)
+        out = F.relu(out)
+
+        # Adaptive average pool => [n_agents, hidden_dim, 1, 1]
+        out = self.pool(out)
+        out = out.view(out.size(0), -1)
+        # q_value = self.output_layer(aggregated)  # => shape [1,1]
+        # return q_value.squeeze()
+        q_value = self.output_layer(out)
+
+        return q_value.squeeze(-1)
+
 
 if __name__ == "__main__":
     from masac.simple_spread import Scenario

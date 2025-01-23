@@ -10,6 +10,8 @@ from masac.simple_spread import Scenario
 
 from actor_mlp import MLPActor
 from critic_mlp import MLPQCritic
+from actor import RandomizedAttentionPolicy
+from critic import CustomQFuncCritic
 
 TensorFuture = th.jit.Future[th.Tensor]
 
@@ -39,8 +41,8 @@ def _future_critic_loss(
         q_next = th.minimum(q1_next, q2_next)
         target_q = state_buffer.reward + (~state_buffer.done) * gamma * (q_next - alpha * logp_next.squeeze(-1))
 
-    q1 = critic1.forward(state_buffer.obs, state_buffer.action)
-    q2 = critic2.forward(state_buffer.obs, state_buffer.action)
+    q1 = critic1.forward(state_buffer.obs, state_buffer.action).view(-1)
+    q2 = critic2.forward(state_buffer.obs, state_buffer.action).view(-1)
     critic1_loss = F.mse_loss(q1, target_q, reduction="none")
     critic2_loss = F.mse_loss(q2, target_q, reduction="none")
 
@@ -272,11 +274,16 @@ if __name__ == "__main__":
     from critic_mlp import MLPQCritic
     from masac.buffer import ReplayBuffer
 
-    policy = MLPActor(agent_dim, landmark_dim, hidden_dim, action_dim).to("cpu")
+    # policy = MLPActor(agent_dim, landmark_dim, hidden_dim, action_dim).to("cpu")
+    policy = RandomizedAttentionPolicy(agent_dim, landmark_dim, hidden_dim, action_dim, device="cpu")
     critic1 = MLPQCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to("cpu")
     critic2 = MLPQCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to("cpu")
     critic1_target = MLPQCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to("cpu")
     critic2_target = MLPQCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to("cpu")
+    # critic1 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to("cpu")
+    # critic2 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to("cpu")
+    # critic1_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to("cpu")
+    # critic2_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to("cpu")
     critic1_target.load_state_dict(critic1.state_dict())
     critic2_target.load_state_dict(critic2.state_dict())
 
@@ -306,6 +313,6 @@ if __name__ == "__main__":
         save_dir="checkpoints",
         video_dir="videos",
         eval_interval=10,
-        num_eval_episodes=10,
+        num_eval_episodes=1,
         device=device,
     )

@@ -251,10 +251,10 @@ if __name__ == "__main__":
 
     env = RandomAgentCountEnv(
         scenario_name=Scenario(),
-        agent_count_dict={1: 1.0, 3: 0.0, 5: 0.0},
+        agent_count_dict={3: 1.0},
         seed=42,
         device="cpu",
-        max_steps=100,
+        max_steps=300,
     )
 
     agent_dim = 2
@@ -295,7 +295,7 @@ if __name__ == "__main__":
         n_episodes=1000,
         batch_size=256,
         gamma=0.95,
-        lr_actor=3e-4,
+        lr_actor=1e-2,
         lr_critic=1e-3,
         tau=0.001,
         alpha=0.01,
@@ -304,6 +304,6 @@ if __name__ == "__main__":
         save_dir="checkpoints",
         video_dir="videos",
         eval_interval=10,
-        num_eval_episodes=10,
+        num_eval_episodes=1,
         device=device,
     )
