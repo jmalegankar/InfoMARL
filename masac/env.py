@@ -45,6 +45,17 @@ class RandomAgentCountEnv:
             max_steps=self.max_steps,
         )
     
+    def construct_edge_index(self):
+        """
+        Constructs a fully connected edge index for the agents.
+        Modify this method if you need a different graph structure.
+        """
+        num_agents = self.current_num_agents
+        row = th.arange(num_agents).repeat(num_agents)
+        col = row.view(num_agents, num_agents).transpose(0, 1).reshape(-1)
+        edge_index = th.stack([row, col], dim=0)  # Shape [2, num_edges]
+        return edge_index.to(self.device)
+
     def reset(self):
         self.current_num_agents = int(self.sample_agent_count())
         self.num_landmarks = self.current_num_agents
@@ -52,18 +63,27 @@ class RandomAgentCountEnv:
         obs = self.env.reset(seed=self._env_rng.integers(0, 2**32, dtype=np.uint32))  # list of length n_agents
         obs = {k: th.stack(tuple(o[k] for o in obs)) for k in obs[0].keys()}
         obs['rnd_nums'] = th.rand(self.current_num_agents, device=self.device, generator=self.rnd_rng)
+        
+        # Add edge_index to the observation
+        obs['edge_index'] = self.construct_edge_index()
         return obs
-    
-    def render(self, value=True):
-        self._render = value
-    
+
     def step(self, actions):
         obs, rewards, done, infos = self.env.step(actions)
         if self._render:
             self.env.render()
         obs = {k: th.stack(tuple(o[k] for o in obs)) for k in obs[0].keys()}
         obs['rnd_nums'] = th.rand(self.current_num_agents, device=self.device, generator=self.rnd_rng)
+        
+        # Add edge_index to the observation
+        obs['edge_index'] = self.construct_edge_index()
         return obs, th.concat(rewards), done, infos
+
+    
+    
+    def render(self, value=True):
+        self._render = value
+    
     
     def close(self):
         if self.env is not None:

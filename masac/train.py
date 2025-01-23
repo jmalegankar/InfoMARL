@@ -1,8 +1,11 @@
 import torch as th
 import torch.nn.functional as F
-from masac.critic import CustomQFuncCritic
+# from masac.critic import CustomQFuncCritic
 from masac.buffer import ReplayBuffer, StateBuffer
-from masac.actor import RandomizedAttentionPolicy
+# from masac.actor import RandomizedAttentionPolicy
+
+from masac.gcn_actor import GCNActor
+from masac.gcn_critic import GCNQCritic
 
 import imageio
 import os
@@ -179,7 +182,8 @@ def train(
         while not done:
             with th.no_grad():
                 actions, _ = policy.sample_actions_and_logp(obs)
-                next_obs, rewards, done, _ = env_wrapper.step(actions.unsqueeze(1))
+                actions = actions.unsqueeze(0)
+                next_obs, rewards, done, _ = env_wrapper.step(actions)
                 buffer.add(obs, actions, rewards, next_obs, done)
                 obs = next_obs
 
@@ -257,7 +261,7 @@ if __name__ == "__main__":
         agent_count_dict={1: 1.0, 3: 0.0, 5: 0.0},
         seed=42,
         device="cpu",
-        max_steps=300,
+        max_steps=100,
     )
 
     agent_dim = 2
@@ -266,24 +270,31 @@ if __name__ == "__main__":
     hidden_dim = 512
 
     # Critic networks
-    critic1 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
-    critic2 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
-    critic1_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
-    critic2_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    # critic1 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    # critic2 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    # critic1_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    # critic2_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    critic1 = GCNQCritic(agent_dim, action_dim, hidden_dim).to(device)
+    critic2 = GCNQCritic(agent_dim, action_dim, hidden_dim).to(device)
+    critic1_target = GCNQCritic(agent_dim, action_dim, hidden_dim).to(device)
+    critic2_target = GCNQCritic(agent_dim, action_dim, hidden_dim).to(device)
     critic1_target.load_state_dict(critic1.state_dict())
     critic2_target.load_state_dict(critic2.state_dict())
 
     # Stochastic policy with tanh bounding
-    policy = RandomizedAttentionPolicy(
-        agent_dim=agent_dim,
-        landmark_dim=landmark_dim,
-        hidden_dim=hidden_dim,
-        action_dim=action_dim
-    ).to(device)
+    # policy = RandomizedAttentionPolicy(
+    #     agent_dim=agent_dim,
+    #     landmark_dim=landmark_dim,
+    #     hidden_dim=hidden_dim,
+    #     action_dim=action_dim
+    # ).to(device)
+    policy = GCNActor(agent_dim=agent_dim, landmark_dim=landmark_dim, hidden_dim=hidden_dim, action_dim=action_dim).to(device)
 
     policy = th.jit.script(policy)
     critic1 = th.jit.script(critic1)
     critic2 = th.jit.script(critic2)
+
+    
 
     buffer = th.jit.script(ReplayBuffer(500000, device))
 
