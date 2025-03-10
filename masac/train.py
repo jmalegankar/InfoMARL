@@ -36,8 +36,8 @@ def _future_critic_loss(
         next_actions,logp = policy.sample_actions_and_logp(state_buffer.next_obs)
         next_q1 = critic1.forward(state_buffer.next_obs, next_actions)
         next_q2 = critic2.forward(state_buffer.next_obs, next_actions)
-        next_q = th.minimum(next_q1, next_q2) # => [n_agents]
-        target_q = state_buffer.reward + (~state_buffer.done) * gamma * (next_q - alpha*logp) # => [n_agents]
+        next_q = th.minimum(next_q1, next_q2)
+        target_q = state_buffer.reward + (~state_buffer.done) * gamma * (next_q - alpha*logp.sum())
     q1 = critic1.forward(state_buffer.obs, state_buffer.action).view(-1)
     q2 = critic2.forward(state_buffer.obs, state_buffer.action).view(-1)
     critic1_loss = F.mse_loss(q1, target_q, reduction="none").view(-1)
@@ -109,7 +109,7 @@ def masac_train(
     policy_optim: th.optim.Optimizer,
     critic1_optim: th.optim.Optimizer,
     critic2_optim: th.optim.Optimizer,
-) -> None:
+) -> Tuple[float, float]:
     critic1_optim.zero_grad()
     critic2_optim.zero_grad()
 
@@ -125,6 +125,8 @@ def masac_train(
 
     policy_loss_val.backward()
     policy_optim.step()
+
+    return critic_loss_val.item(), policy_loss_val.item()
 
 
 def soft_update(target, source, tau):
@@ -163,7 +165,7 @@ def train(
     
     num_timesteps = 0
 
-    for episode in tqdm(range(n_episodes)):
+    for episode in range(n_episodes):
         policy.eval()
         critic1.eval()
         critic2.eval()
@@ -187,9 +189,10 @@ def train(
                 policy.train()
                 critic1.train()
                 critic2.train()
+                cr_l, po_l = 0, 0
                 for _ in range(train_epochs):
                     replay_batch = buffer.sample(batch_size, device=device)
-                    masac_train(
+                    critic_loss, policy_loss = masac_train(
                         policy,
                         critic1,
                         critic2,
@@ -200,6 +203,9 @@ def train(
                         critic1_optim,
                         critic2_optim,
                     )
+                    cr_l += critic_loss
+                    po_l += policy_loss
+                print(f"Timesteps: {num_timesteps} | Critic Loss: {cr_l/train_epochs} | Policy Loss: {po_l/train_epochs}")
                 policy.eval()
                 critic1.eval()
                 critic2.eval()
@@ -222,23 +228,23 @@ def train(
                 os.path.join(save_dir, f"checkpoint_{episode}.pt"),
             )
 
-        if episode % eval_interval == 0:
-            with th.no_grad():
-                episode_reward = 0
-                frames = []
-                obs = env_wrapper.reset()
-                frames.append(env_wrapper.env.render(mode="rgb_array"))
-                done = False
-                while not done:
-                    actions, _ = policy.sample_actions_and_logp(obs)
-                    obs, rewards, done, _ = env_wrapper.step(actions.unsqueeze(1))
-                    episode_reward += rewards.mean().item()
-                    frames.append(env_wrapper.env.render(mode="rgb_array"))
+        # if episode % eval_interval == 0:
+        #     with th.no_grad():
+        #         episode_reward = 0
+        #         frames = []
+        #         obs = env_wrapper.reset()
+        #         frames.append(env_wrapper.env.render(mode="rgb_array"))
+        #         done = False
+        #         while not done:
+        #             actions, _ = policy.sample_actions_and_logp(obs)
+        #             obs, rewards, done, _ = env_wrapper.step(actions.unsqueeze(1))
+        #             episode_reward += rewards.mean().item()
+        #             frames.append(env_wrapper.env.render(mode="rgb_array"))
                 
-                imageio.mimsave(os.path.join(video_dir, f"episode_{episode}.gif"), frames, fps=10)
+        #         imageio.mimsave(os.path.join(video_dir, f"episode_{episode}.gif"), frames, fps=10)
 
 
-            print(f"Episode {episode} | Reward: {episode_reward} | Steps: {num_timesteps}")
+        #     print(f"Episode {episode} | Reward: {episode_reward} | Steps: {num_timesteps}")
 
 
 if __name__ == "__main__":
@@ -262,13 +268,13 @@ if __name__ == "__main__":
     agent_dim = 2
     landmark_dim = 2
     action_dim = 2
-    hidden_dim = 256
+    hidden_dim = 64
 
     # Critic networks
-    critic1 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
-    critic2 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
-    critic1_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
-    critic2_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim).to(device)
+    critic1 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim, [1,3,5]).to(device)
+    critic2 = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim, [1,3,5]).to(device)
+    critic1_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim, [1,3,5]).to(device)
+    critic2_target = CustomQFuncCritic(agent_dim, action_dim, landmark_dim, hidden_dim, [1,3,5]).to(device)
     critic1_target.load_state_dict(critic1.state_dict())
     critic2_target.load_state_dict(critic2.state_dict())
 
@@ -297,13 +303,13 @@ if __name__ == "__main__":
         n_episodes=100000,
         batch_size=100,
         gamma=0.99,
-        lr_actor=3e-4,
-        lr_critic=1e-4,
+        lr_actor=1e-9,
+        lr_critic=1e-3,
         tau=0.01,
-        alpha=0.693,
-        train_interval=900,
-        train_epochs=3,
-        start_training_after=15000,
+        alpha=0.00,
+        train_interval=1000,
+        train_epochs=10,
+        start_training_after=50000,
         save_interval=1000,
         save_dir="checkpoints",
         video_dir="videos",

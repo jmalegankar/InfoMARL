@@ -23,13 +23,12 @@ class RandomizedAttentionPolicy(nn.Module):
 
 
         # State consensus
-        self.concencus_fc = nn.Linear(hidden_dim, hidden_dim)
+        self.consensus_fc = nn.Linear(hidden_dim, hidden_dim)
+        self.consensus_msg_attn = nn.MultiheadAttention(hidden_dim, 1, batch_first=True)
+        self.consensus_attention = nn.MultiheadAttention(hidden_dim, 1, batch_first=True)
 
-        self.consensus_attn1 = nn.MultiheadAttention(hidden_dim, 1, batch_first=True)
-        self.consensus_attn2 = nn.MultiheadAttention(hidden_dim, 1, batch_first=True)
-
-        self.mean_layer = nn.Linear(2*hidden_dim, action_dim)
-        self.logstd_layer = nn.Linear(2*hidden_dim, action_dim)
+        self.mean_layer = nn.Linear(hidden_dim, action_dim)
+        self.logstd_layer = nn.Linear(hidden_dim, action_dim)
 
     
     @th.jit.export
@@ -78,20 +77,19 @@ class RandomizedAttentionPolicy(nn.Module):
     def consensus(self, temp_states: th.Tensor, obs: Dict[str, th.Tensor], messages: th.Tensor):
         rnd_nums = obs['rnd_nums']  # => [n_agents]
         idx = obs['idx'] # => [n_agents]
-        rnd = rnd_nums[idx].view(-1) # => [n_agents]
+        rnd = rnd_nums[idx] # => [n_agents]
         embed = self.relu(self.embed(obs['obs']))  # => [n_agents, n_landmarks, hidden_dim]
-        embed = self.relu(self.concencus_fc(embed))  # => [n_agents, n_landmarks, hidden_dim]
-        out = th.stack(
-            [th.concat(
-                (
-                    self.consensus_attn1(messages[rnd <= rnd[i]], temp_states[i], embed[i], need_weights=False)[0].mean(dim=-2),
-                    self.consensus_attn2(messages[rnd >= rnd[i]], temp_states[i], embed[i], need_weights=False)[0].mean(dim=-2),
-                ), dim=-1) for i in range(temp_states.size(0))
-            ], dim=0
-        )  # => [n_agents, hidden_dim]
-        out = self.relu(out)
-        mean = self.mean_layer(out)
-        logstd = self.logstd_layer(out)
+        values = th.stack(list(
+            self.consensus_msg_attn(messages, embed[i], embed[i], need_weights=False)[0] \
+            for i in range(temp_states.size(0))
+        )) # => [n_agents, n_agents, hidden_dim]
+        attn_out = th.stack(list(
+            self.consensus_attention(temp_states[i], messages, values[i], attn_mask=self._create_mask(rnd, rnd[i]), need_weights=False)[0] \
+            for i in range(temp_states.size(0))
+        ))
+        attn_out = self.relu(self.consensus_fc(self.relu(attn_out)).mean(dim=-2))  # => [n_agents, hidden_dim]
+        mean = self.mean_layer(attn_out)
+        logstd = self.logstd_layer(attn_out)
         return mean, logstd
     
     @th.jit.export

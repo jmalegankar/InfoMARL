@@ -63,7 +63,7 @@ class RandomAgentCountEnv:
             self.env.render()
         obs = {k: th.stack(tuple(o[k] for o in obs)) for k in obs[0].keys()}
         obs['rnd_nums'] = th.rand(self.current_num_agents, device=self.device, generator=self.rnd_rng)
-        return obs, th.concat(rewards), done, infos
+        return obs, rewards[0], done, infos
     
     def close(self):
         if self.env is not None:
