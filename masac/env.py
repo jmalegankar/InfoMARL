@@ -10,7 +10,7 @@ class RandomAgentCountEnv:
         device="cpu",
         continuous_actions=True,
         max_steps=None,
-        seed=None
+        seed=42
     ):
         self.scenario_name = scenario_name
         self.agent_count_dict = agent_count_dict
@@ -49,7 +49,7 @@ class RandomAgentCountEnv:
         self.current_num_agents = int(self.sample_agent_count())
         self.num_landmarks = self.current_num_agents
         self.env = self.make_env(self.current_num_agents)
-        obs = self.env.reset(seed=self._env_rng.integers(0, 2**32, dtype=np.uint32))  # list of length n_agents
+        obs = self.env.reset()  # list of length n_agents
         obs = {k: th.stack(tuple(o[k] for o in obs)) for k in obs[0].keys()}
         obs['rnd_nums'] = th.rand(self.current_num_agents, device=self.device, generator=self.rnd_rng)
         return obs
