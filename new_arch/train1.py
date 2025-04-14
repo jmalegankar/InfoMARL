@@ -20,14 +20,16 @@ writer = SummaryWriter(log_dir=log_dir)
 
 # HYPERPARAMETERS
 num_envs = 64
-number_agents = 3
+number_agents = 4
 episode_length = 200
 num_episodes = 1000000
-batch_size = 256
+batch_size = 32
 gamma = 0.95
 tau = 0.005
-actor_lr = 3e-4
-critic_lr = 1e-3
+actor_lr = 1e-4
+critic_lr = 1e-4
+update_every = 64
+num_updates = 2
 alpha = 0.2
 
 writer.add_text('Hyperparameters/num_envs', str(num_envs))
@@ -205,7 +207,11 @@ for episode in range(num_episodes):
             global_step += 1
             
         
-        if replay_buffer.size >= 10*batch_size and t % 10 == 0:
+        if not (replay_buffer.size >= 10*batch_size):
+            continue
+        if (global_step * num_envs) % update_every:
+            continue
+        for _ in range(num_updates):
             obs_batch, actions_batch, reward_batch, next_obs_batch, dones_batch, rand_batch = replay_buffer.sample(batch_size) #shape (num_envs * number_agents, obs_dim), (num_envs * number_agents, action_dim), (num_envs * number_agents), (num_envs * number_agents, obs_dim), (num_envs * number_agents), (num_envs * number_agents, number_agents)
             obs_batch = obs_batch.view(-1, obs_dim) #shape: (num_envs * number_agents, obs_dim)
             actions_batch = actions_batch.view(-1, action_dim) #shape: (num_envs * number_agents, action_dim)
