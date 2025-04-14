@@ -21,14 +21,16 @@ writer = SummaryWriter(log_dir=log_dir)
 
 # HYPERPARAMETERS
 num_envs = 64
-number_agents = 3
+number_agents = 4
 episode_length = 200
 num_episodes = 1000000
-batch_size = 256
+batch_size = 32
 gamma = 0.95
 tau = 0.005
-actor_lr = 3e-4
-critic_lr = 1e-3
+actor_lr = 1e-4
+critic_lr = 1e-4
+update_every = 64
+num_updates = 2
 alpha = 0.2
 
 def set_seed(seed):
@@ -44,7 +46,6 @@ def set_seed(seed):
 # Set seed for reproducibility
 seed = 42
 set_seed(seed)
-
 
 writer.add_text('Hyperparameters/num_envs', str(num_envs))
 writer.add_text('Hyperparameters/number_agents', str(number_agents))
@@ -222,7 +223,11 @@ for episode in range(num_episodes):
             global_step += 1
             
         
-        if replay_buffer.size >= 10*batch_size and t % 10 == 0:
+        if not (replay_buffer.size >= 10*batch_size):
+            continue
+        if (global_step * num_envs) % update_every:
+            continue
+        for _ in range(num_updates):
             obs_batch, actions_batch, reward_batch, next_obs_batch, dones_batch, rand_batch = replay_buffer.sample(batch_size) #shape (num_envs * number_agents, obs_dim), (num_envs * number_agents, action_dim), (num_envs * number_agents), (num_envs * number_agents, obs_dim), (num_envs * number_agents), (num_envs * number_agents, number_agents)
             obs_batch = obs_batch.view(-1, obs_dim) #shape: (num_envs * number_agents, obs_dim)
             actions_batch = actions_batch.view(-1, action_dim) #shape: (num_envs * number_agents, action_dim)
@@ -294,6 +299,7 @@ for episode in range(num_episodes):
     
     if episode % gif_save_interval == 0 and frames:
         try:
+            # Process and save GIF to file system
             gif_path = os.path.join(gifs_dir, f'episode_{episode}.gif')
             processed_frames = []
             for frame in frames:
@@ -301,19 +307,36 @@ for episode in range(num_episodes):
                     frame = (frame * 255).astype(np.uint8)
                 processed_frames.append(frame)
             
+            # Save to disk
             imageio.mimsave(gif_path, processed_frames, fps=10)
             print(f"Successfully saved GIF to {gif_path}")
             
+            # Save last frame
             last_frame_path = os.path.join(gifs_dir, f'episode_{episode}_last_frame.png')
             imageio.imwrite(last_frame_path, processed_frames[-1])
-
-
-            video_path = gif_path  # Path to the saved gif
+            
+            # Log to TensorBoard as video
             video_tensor = np.array(processed_frames)  # Frames need to be in a numpy array
             video_tensor = video_tensor.transpose(0, 3, 1, 2)  # Change shape to (T, C, H, W)
-            writer.add_video('Training/gif_example', video_tensor, global_step, fps=10)
+            writer.add_video(f'Training/agent_behavior_episode_{episode}', video_tensor[None], episode, fps=10)
+            
+            # Also add the last frame as an image for quick reference
+            writer.add_image(f'Training/last_frame', processed_frames[-1], episode, dataformats='HWC')
+            
+            # Log metrics about the visualization
+            writer.add_scalar('Visualization/frame_count', len(processed_frames), episode)
+            
+            # Calculate and log average pixel intensity as a simple metric
+            if processed_frames:
+                avg_intensity = np.mean([np.mean(frame) for frame in processed_frames])
+                writer.add_scalar('Visualization/avg_pixel_intensity', avg_intensity, episode)
+                
+                # Calculate and log agent spread (approximated by standard deviation of pixel values)
+                last_frame = processed_frames[-1]
+                std_pixel = np.std(last_frame)
+                writer.add_scalar('Visualization/agent_spread_metric', std_pixel, episode)
         except Exception as e:
-            print(f"Failed to save GIF: {e}")
+            print(f"Failed to save or log GIF: {e}")
     
     avg_episode_reward = episode_reward / episode_length
     print(f"Episode {episode+1}/{num_episodes} - Avg Reward: {avg_episode_reward:.2f}")
