@@ -14,6 +14,7 @@ import imageio
 import numpy as np
 import random
 
+
 # TensorBoard init
 current_time = datetime.now().strftime('%b%d_%H-%M-%S')
 log_dir = os.path.join('runs', f'vmas_simple_spread_{current_time}')
@@ -320,9 +321,7 @@ for episode in range(num_episodes):
             video_tensor = video_tensor.transpose(0, 3, 1, 2)  # Change shape to (T, C, H, W)
             writer.add_video(f'Training/agent_behavior_episode_{episode}', video_tensor[None], episode, fps=10)
             
-            # Also add the last frame as an image for quick reference
             writer.add_image(f'Training/last_frame', processed_frames[-1], episode, dataformats='HWC')
-            
             # Log metrics about the visualization
             writer.add_scalar('Visualization/frame_count', len(processed_frames), episode)
             
