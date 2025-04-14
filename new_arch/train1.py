@@ -12,6 +12,7 @@ from datetime import datetime
 
 import imageio
 import numpy as np
+import random
 
 # TensorBoard init
 current_time = datetime.now().strftime('%b%d_%H-%M-%S')
@@ -29,6 +30,21 @@ tau = 0.005
 actor_lr = 3e-4
 critic_lr = 1e-3
 alpha = 0.2
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# Set seed for reproducibility
+seed = 42
+set_seed(seed)
+
 
 writer.add_text('Hyperparameters/num_envs', str(num_envs))
 writer.add_text('Hyperparameters/number_agents', str(number_agents))
@@ -55,6 +71,7 @@ env = vmas.make_env(
     n_agents=number_agents,
     continuous_actions=True,
     max_steps=episode_length,
+    seed=seed,
 )
 
 #Dims 
@@ -289,6 +306,12 @@ for episode in range(num_episodes):
             
             last_frame_path = os.path.join(gifs_dir, f'episode_{episode}_last_frame.png')
             imageio.imwrite(last_frame_path, processed_frames[-1])
+
+
+            video_path = gif_path  # Path to the saved gif
+            video_tensor = np.array(processed_frames)  # Frames need to be in a numpy array
+            video_tensor = video_tensor.transpose(0, 3, 1, 2)  # Change shape to (T, C, H, W)
+            writer.add_video('Training/gif_example', video_tensor, global_step, fps=10)
         except Exception as e:
             print(f"Failed to save GIF: {e}")
     
