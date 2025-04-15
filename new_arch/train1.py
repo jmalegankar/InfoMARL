@@ -34,6 +34,14 @@ update_every = 96*4
 num_updates = 4
 alpha = 0.1
 
+
+# Checkpointing parameters
+checkpoint_dir = os.path.join(log_dir, 'checkpoints')
+os.makedirs(checkpoint_dir, exist_ok=True)
+checkpoint_interval = 100  
+resume_training = False    
+checkpoint_path = None  
+
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -58,6 +66,7 @@ writer.add_text('Hyperparameters/tau', str(tau))
 writer.add_text('Hyperparameters/actor_lr', str(actor_lr))
 writer.add_text('Hyperparameters/critic_lr', str(critic_lr))
 writer.add_text('Hyperparameters/alpha', str(alpha))
+writer.add_text('Hyperparameters/checkpoint_interval', str(checkpoint_interval))
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -125,11 +134,82 @@ def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs)
     permuted_rand = torch.gather(expanded_rand, dim=2, index=permutation_indices.unsqueeze(0).expand(num_envs, -1, -1))
     return permuted_rand
 
+def save_checkpoint(actor, critic, target_critic, actor_optimizer, critic_optimizer, 
+                   replay_buffer, episode, global_step, update_step, best_reward=None):
+    checkpoint = {
+        'actor_state_dict': actor.state_dict(),
+        'critic_state_dict': critic.state_dict(),
+        'target_critic_state_dict': target_critic.state_dict(),
+        'actor_optimizer_state_dict': actor_optimizer.state_dict(),
+        'critic_optimizer_state_dict': critic_optimizer.state_dict(),
+        'replay_buffer': replay_buffer.get_save_state(),
+        'episode': episode,
+        'global_step': global_step,
+        'update_step': update_step,
+        'seed': seed,
+        'best_reward': best_reward
+    }
+    
+    checkpoint_filename = os.path.join(checkpoint_dir, f'checkpoint_episode_{episode}.pt')
+    torch.save(checkpoint, checkpoint_filename)
+    print(f"Checkpoint saved to {checkpoint_filename}")
+    
+    latest_checkpoint = os.path.join(checkpoint_dir, 'checkpoint_latest.pt')
+    torch.save(checkpoint, latest_checkpoint)
+    
+    if best_reward is not None:
+        best_checkpoint = os.path.join(checkpoint_dir, 'checkpoint_best.pt')
+        torch.save(checkpoint, best_checkpoint)
+        print(f"New best reward {best_reward:.2f} - saved best checkpoint")
+
+def load_checkpoint(checkpoint_path):
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+    
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    return checkpoint
+
+# Initialize or load from checkpoint
 global_step = 0
 update_step = 0
+best_reward = float('-inf')
+start_episode = 0
+
+if resume_training:
+    # If checkpoint_path is None, try to load the latest checkpoint
+    if checkpoint_path is None:
+        checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint_latest.pt')
+    
+    if os.path.exists(checkpoint_path):
+        print(f"Loading checkpoint from {checkpoint_path}")
+        checkpoint = load_checkpoint(checkpoint_path)
+        
+        actor.load_state_dict(checkpoint['actor_state_dict'])
+        critic.load_state_dict(checkpoint['critic_state_dict'])
+        target_critic.load_state_dict(checkpoint['target_critic_state_dict'])
+        actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state_dict'])
+        critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state_dict'])
+        
+        # Load replay buffer if it exists in the checkpoint
+        if 'replay_buffer' in checkpoint:
+            replay_buffer.load_save_state(checkpoint['replay_buffer'])
+        
+        start_episode = checkpoint['episode'] + 1  # Start from the next episode
+        global_step = checkpoint['global_step']
+        update_step = checkpoint['update_step']
+        
+        if 'best_reward' in checkpoint:
+            best_reward = checkpoint['best_reward']
+        
+        print(f"Resuming from episode {start_episode}, global step {global_step}, update step {update_step}")
+        print(f"Current best reward: {best_reward:.2f}")
+    else:
+        print(f"No checkpoint found at {checkpoint_path}, starting from scratch.")
+
 gif_save_interval = 100
 
-for episode in range(num_episodes):
+for episode in range(start_episode, num_episodes):
     all_obs = env.reset()
     obs_batched = torch.stack(all_obs, dim=1).view(-1, obs_dim).to(device)
     episode_reward = 0.0
@@ -302,6 +382,22 @@ for episode in range(num_episodes):
             for param, target_param in zip(critic.parameters(), target_critic.parameters()):
                 target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
+    # Save checkpoints at regular intervals
+    if episode % checkpoint_interval == 0:
+        save_checkpoint(actor, critic, target_critic, 
+                       actor_optimizer, critic_optimizer, 
+                       replay_buffer, episode, global_step, update_step)
+    
+    # Calculate average episode reward
+    avg_episode_reward = episode_reward / episode_length
+    
+    # Check if this is the best reward so far
+    if avg_episode_reward > best_reward:
+        best_reward = avg_episode_reward
+        # Save a checkpoint with the best reward
+        save_checkpoint(actor, critic, target_critic, 
+                       actor_optimizer, critic_optimizer, 
+                       replay_buffer, episode, global_step, update_step, best_reward)
     
     if episode % gif_save_interval == 0 and frames:
         try:
@@ -342,7 +438,6 @@ for episode in range(num_episodes):
         except Exception as e:
             print(f"Failed to save or log GIF: {e}")
     
-    avg_episode_reward = episode_reward / episode_length
     print(f"Episode {episode+1}/{num_episodes} - Avg Reward: {avg_episode_reward:.2f}")
     writer.add_scalar('Rewards/episode_reward', episode_reward, episode)
     writer.add_scalar('Rewards/avg_episode_reward', avg_episode_reward, episode)
@@ -365,6 +460,11 @@ for episode in range(num_episodes):
             writer.add_histogram(f'Weights/actor_{name}', param.data, episode)
         for name, param in critic.named_parameters():
             writer.add_histogram(f'Weights/critic_{name}', param.data, episode)
+
+# Save a final checkpoint at the end of training
+save_checkpoint(actor, critic, target_critic, 
+               actor_optimizer, critic_optimizer, 
+               replay_buffer, num_episodes-1, global_step, update_step)
 
 # Close the TensorBoard writer when training is done
 writer.close()
