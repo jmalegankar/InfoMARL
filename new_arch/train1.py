@@ -21,18 +21,18 @@ log_dir = os.path.join('runs', f'vmas_simple_spread_{current_time}')
 writer = SummaryWriter(log_dir=log_dir)
 
 # HYPERPARAMETERS
-num_envs = 64
+num_envs = 96
 number_agents = 4
-episode_length = 200
+episode_length = 400
 num_episodes = 1000000
-batch_size = 32
+batch_size = 1024
 gamma = 0.95
 tau = 0.005
 actor_lr = 1e-4
 critic_lr = 1e-4
-update_every = 64
-num_updates = 2
-alpha = 0.2
+update_every = 96*4
+num_updates = 4
+alpha = 0.1
 
 def set_seed(seed):
     random.seed(seed)
@@ -106,7 +106,7 @@ target_critic.load_state_dict(critic.state_dict())
 actor_optimizer = optim.Adam(actor.parameters(), lr=actor_lr)
 critic_optimizer = optim.Adam(critic.parameters(), lr=critic_lr)
 
-buffer_capacity = 1000000
+buffer_capacity = 2000000
 replay_buffer = ReplayBuffer(buffer_capacity, obs_dim, action_dim, number_agents, device)
 
 dummy_obs = torch.zeros(1, obs_dim).to(device)
@@ -117,7 +117,7 @@ def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs)
     """
     Permute the random numbers for each agent in the environment.
     """
-    permutation_indices = torch.zeros(number_agents, number_agents, dtype=torch.long)
+    permutation_indices = torch.zeros(number_agents, number_agents, dtype=torch.long, device=device)
     for i in range(number_agents):
         other_agents = sorted([j for j in range(number_agents) if j != i])
         permutation_indices[i] = torch.tensor([i] + other_agents)
@@ -156,6 +156,8 @@ for episode in range(num_episodes):
 
     
     for t in range(episode_length):
+        actor.eval()
+        critic.eval()
         with torch.no_grad():
             env_random_numbers = torch.rand(num_envs, number_agents, device=device) #shape: (num_envs, number_agents)
             permuted_rand = get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs) #shape: (num_envs, number_agents, number_agents)
@@ -228,6 +230,8 @@ for episode in range(num_episodes):
             continue
         if (global_step * num_envs) % update_every:
             continue
+        actor.train()
+        critic.train()
         for _ in range(num_updates):
             obs_batch, actions_batch, reward_batch, next_obs_batch, dones_batch, rand_batch = replay_buffer.sample(batch_size) #shape (num_envs * number_agents, obs_dim), (num_envs * number_agents, action_dim), (num_envs * number_agents), (num_envs * number_agents, obs_dim), (num_envs * number_agents), (num_envs * number_agents, number_agents)
             obs_batch = obs_batch.view(-1, obs_dim) #shape: (num_envs * number_agents, obs_dim)
@@ -276,21 +280,22 @@ for episode in range(num_episodes):
             actor_optimizer.step()
 
 
-            # Save actor loss for this batch
-            actor_loss_value = actor_loss.item()
-            episode_actor_losses.append(actor_loss_value)
+            with torch.no_grad():
+                # Save actor loss for this batch
+                actor_loss_value = actor_loss.item()
+                episode_actor_losses.append(actor_loss_value)
+                
+                # Log training metrics to TensorBoard
+                writer.add_scalar('Training/actor_loss', actor_loss_value, update_step)
+                writer.add_scalar('Training/critic_loss', critic_loss_value, update_step)
+                writer.add_scalar('Training/q_value', mean_q_value, update_step)
+                writer.add_scalar('Training/target_q', target_q.mean().item(), update_step)
             
-            # Log training metrics to TensorBoard
-            writer.add_scalar('Training/actor_loss', actor_loss_value, update_step)
-            writer.add_scalar('Training/critic_loss', critic_loss_value, update_step)
-            writer.add_scalar('Training/q_value', mean_q_value, update_step)
-            writer.add_scalar('Training/target_q', target_q.mean().item(), update_step)
-            
-            # Log gradient norms
-            actor_grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in actor.parameters() if p.grad is not None) ** 0.5
-            critic_grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in critic.parameters() if p.grad is not None) ** 0.5
-            writer.add_scalar('Gradients/actor_grad_norm', actor_grad_norm, update_step)
-            writer.add_scalar('Gradients/critic_grad_norm', critic_grad_norm, update_step)
+                # Log gradient norms
+                actor_grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in actor.parameters() if p.grad is not None) ** 0.5
+                critic_grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in critic.parameters() if p.grad is not None) ** 0.5
+                writer.add_scalar('Gradients/actor_grad_norm', actor_grad_norm, update_step)
+                writer.add_scalar('Gradients/critic_grad_norm', critic_grad_norm, update_step)
             
             update_step += 1
             
