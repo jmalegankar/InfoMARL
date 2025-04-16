@@ -34,6 +34,8 @@ alpha_lr = 1e-5
 update_every = 96*4
 num_updates = 4
 initial_alpha = 5
+alpha_min = 0.1
+alpha_max = 10.0
 target_entropy = -2
 
 
@@ -120,8 +122,11 @@ critic_optimizer = optim.Adam(critic.parameters(), lr=critic_lr)
 
 
 log_alpha = torch.tensor(np.log(initial_alpha), dtype=torch.float32, requires_grad=True, device=device)
-alpha = log_alpha.exp()
+alpha = torch.clamp(log_alpha.exp(), min=0.1, max=10.0) 
 alpha_optimizer = optim.Adam([log_alpha], lr=alpha_lr)
+
+writer.add_text('Hyperparameters/alpha_min', str(alpha_min))
+writer.add_text('Hyperparameters/alpha_max', str(alpha_max))
 
 buffer_capacity = 2000000
 replay_buffer = ReplayBuffer(buffer_capacity, obs_dim, action_dim, number_agents, device)
@@ -212,8 +217,10 @@ if resume_training:
         critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state_dict'])
         
         # Load alpha related parameters
-        alpha = torch.tensor(checkpoint['alpha'], device=device)
-        log_alpha = torch.tensor(checkpoint['log_alpha'], requires_grad=True, device=device)
+        loaded_alpha = torch.tensor(checkpoint['alpha'], device=device)
+        loaded_alpha = torch.clamp(loaded_alpha, min=alpha_min, max=alpha_max)
+        log_alpha = torch.log(loaded_alpha).requires_grad_(True).to(device)
+        alpha = loaded_alpha
         alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer_state_dict'])
         
         # Load replay buffer if it exists in the checkpoint
@@ -400,9 +407,8 @@ for episode in range(start_episode, num_episodes):
             alpha_optimizer.zero_grad()
             alpha_loss.backward()
             alpha_optimizer.step()
-            
-            # Update alpha value after optimization
-            alpha = log_alpha.exp()
+
+            alpha = torch.clamp(log_alpha.exp(), min=alpha_min, max=alpha_max)
             
             # Log alpha metrics
             alpha_loss_value = alpha_loss.item()
