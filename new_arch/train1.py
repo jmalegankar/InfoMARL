@@ -21,24 +21,9 @@ log_dir = os.path.join('runs', f'vmas_simple_spread_{current_time}')
 writer = SummaryWriter(log_dir=log_dir)
 
 # HYPERPARAMETERS
-# num_envs = 96
-# number_agents = 4
-# episode_length = 400
-# num_episodes = 1000000
-# batch_size = 1024
-# gamma = 0.95
-# tau = 0.005
-# actor_lr = 1e-4
-# critic_lr = 1e-4
-# alpha_lr = 3e-4  # Learning rate for alpha
-# update_every = 96*4
-# num_updates = 4
-# initial_alpha = 5
-# target_entropy = -2
-
-num_envs = 2
-number_agents = 3
-episode_length = 200
+num_envs = 96
+number_agents = 4
+episode_length = 400
 num_episodes = 1000000
 batch_size = 1024
 gamma = 0.95
@@ -50,6 +35,8 @@ update_every = 96*4
 num_updates = 4
 initial_alpha = 5
 target_entropy = -2
+
+
 
 checkpoint_dir = os.path.join(log_dir, 'checkpoints')
 os.makedirs(checkpoint_dir, exist_ok=True)
