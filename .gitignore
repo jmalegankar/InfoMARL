@@ -5,3 +5,4 @@ __pycache__/
 models/
 runs/
 new_arch/runs/
+pod-jmalegaonkar-testpod.yaml

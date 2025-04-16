@@ -21,25 +21,40 @@ log_dir = os.path.join('runs', f'vmas_simple_spread_{current_time}')
 writer = SummaryWriter(log_dir=log_dir)
 
 # HYPERPARAMETERS
-num_envs = 96
-number_agents = 4
-episode_length = 400
+# num_envs = 96
+# number_agents = 4
+# episode_length = 400
+# num_episodes = 1000000
+# batch_size = 1024
+# gamma = 0.95
+# tau = 0.005
+# actor_lr = 1e-4
+# critic_lr = 1e-4
+# alpha_lr = 3e-4  # Learning rate for alpha
+# update_every = 96*4
+# num_updates = 4
+# initial_alpha = 5
+# target_entropy = -2
+
+num_envs = 2
+number_agents = 3
+episode_length = 200
 num_episodes = 1000000
 batch_size = 1024
 gamma = 0.95
 tau = 0.005
 actor_lr = 1e-4
 critic_lr = 1e-4
+alpha_lr = 1e-5
 update_every = 96*4
 num_updates = 4
-alpha = 0.1
+initial_alpha = 5
+target_entropy = -2
 
-
-# Checkpointing parameters
 checkpoint_dir = os.path.join(log_dir, 'checkpoints')
 os.makedirs(checkpoint_dir, exist_ok=True)
-checkpoint_interval = 100  
-resume_training = False    
+checkpoint_interval = 100 
+resume_training = False 
 checkpoint_path = None  
 
 def set_seed(seed):
@@ -65,8 +80,9 @@ writer.add_text('Hyperparameters/gamma', str(gamma))
 writer.add_text('Hyperparameters/tau', str(tau))
 writer.add_text('Hyperparameters/actor_lr', str(actor_lr))
 writer.add_text('Hyperparameters/critic_lr', str(critic_lr))
-writer.add_text('Hyperparameters/alpha', str(alpha))
-writer.add_text('Hyperparameters/checkpoint_interval', str(checkpoint_interval))
+writer.add_text('Hyperparameters/alpha_lr', str(alpha_lr))
+writer.add_text('Hyperparameters/initial_alpha', str(initial_alpha))
+writer.add_text('Hyperparameters/target_entropy', str(target_entropy))
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -93,7 +109,7 @@ agent_dim = 4
 landmark_dim = 2 * number_agents
 other_agent_dim = 2 * (number_agents - 1)
 
-#
+
 actor = RandomAgentPolicy(
     number_agents, 
     agent_dim=4, 
@@ -115,6 +131,11 @@ target_critic.load_state_dict(critic.state_dict())
 actor_optimizer = optim.Adam(actor.parameters(), lr=actor_lr)
 critic_optimizer = optim.Adam(critic.parameters(), lr=critic_lr)
 
+
+log_alpha = torch.tensor(np.log(initial_alpha), dtype=torch.float32, requires_grad=True, device=device)
+alpha = log_alpha.exp()
+alpha_optimizer = optim.Adam([log_alpha], lr=alpha_lr)
+
 buffer_capacity = 2000000
 replay_buffer = ReplayBuffer(buffer_capacity, obs_dim, action_dim, number_agents, device)
 
@@ -135,13 +156,20 @@ def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs)
     return permuted_rand
 
 def save_checkpoint(actor, critic, target_critic, actor_optimizer, critic_optimizer, 
-                   replay_buffer, episode, global_step, update_step, best_reward=None):
+                   alpha, log_alpha, alpha_optimizer, replay_buffer, episode, 
+                   global_step, update_step, best_reward=None):
+    """
+    Save a checkpoint of the training state.
+    """
     checkpoint = {
         'actor_state_dict': actor.state_dict(),
         'critic_state_dict': critic.state_dict(),
         'target_critic_state_dict': target_critic.state_dict(),
         'actor_optimizer_state_dict': actor_optimizer.state_dict(),
         'critic_optimizer_state_dict': critic_optimizer.state_dict(),
+        'alpha': alpha.item(),
+        'log_alpha': log_alpha.item(),
+        'alpha_optimizer_state_dict': alpha_optimizer.state_dict(),
         'replay_buffer': replay_buffer.get_save_state(),
         'episode': episode,
         'global_step': global_step,
@@ -150,19 +178,25 @@ def save_checkpoint(actor, critic, target_critic, actor_optimizer, critic_optimi
         'best_reward': best_reward
     }
     
+    # Regular checkpoint
     checkpoint_filename = os.path.join(checkpoint_dir, f'checkpoint_episode_{episode}.pt')
     torch.save(checkpoint, checkpoint_filename)
     print(f"Checkpoint saved to {checkpoint_filename}")
     
+    # Always save the latest checkpoint for easy resume
     latest_checkpoint = os.path.join(checkpoint_dir, 'checkpoint_latest.pt')
     torch.save(checkpoint, latest_checkpoint)
     
+    # If this is a best reward checkpoint, save it separately
     if best_reward is not None:
         best_checkpoint = os.path.join(checkpoint_dir, 'checkpoint_best.pt')
         torch.save(checkpoint, best_checkpoint)
         print(f"New best reward {best_reward:.2f} - saved best checkpoint")
 
 def load_checkpoint(checkpoint_path):
+    """
+    Load a checkpoint and return the saved states.
+    """
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
     
@@ -177,7 +211,6 @@ best_reward = float('-inf')
 start_episode = 0
 
 if resume_training:
-    # If checkpoint_path is None, try to load the latest checkpoint
     if checkpoint_path is None:
         checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint_latest.pt')
     
@@ -190,6 +223,11 @@ if resume_training:
         target_critic.load_state_dict(checkpoint['target_critic_state_dict'])
         actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state_dict'])
         critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state_dict'])
+        
+        # Load alpha related parameters
+        alpha = torch.tensor(checkpoint['alpha'], device=device)
+        log_alpha = torch.tensor(checkpoint['log_alpha'], requires_grad=True, device=device)
+        alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer_state_dict'])
         
         # Load replay buffer if it exists in the checkpoint
         if 'replay_buffer' in checkpoint:
@@ -204,6 +242,7 @@ if resume_training:
         
         print(f"Resuming from episode {start_episode}, global step {global_step}, update step {update_step}")
         print(f"Current best reward: {best_reward:.2f}")
+        print(f"Current alpha value: {alpha.item():.6f}")
     else:
         print(f"No checkpoint found at {checkpoint_path}, starting from scratch.")
 
@@ -219,6 +258,8 @@ for episode in range(start_episode, num_episodes):
     episode_critic_losses = []
     episode_q_values = []
     episode_log_probs = []
+    episode_alpha_losses = []
+    episode_alpha_values = []
 
     # For GIF saving
     if episode % gif_save_interval == 0:
@@ -325,7 +366,9 @@ for episode in range(start_episode, num_episodes):
             with torch.no_grad():
                 target_q1, target_q2 = target_critic(next_obs_batch, next_actions) #shape(num_envs, 1), (num_envs, 1)  
                 target_q = torch.min(target_q1, target_q2).view(-1) #shape (num_envs)
-                target_value = reward_batch + gamma * (1 - dones_batch) * (target_q - alpha * next_log_probs) #shape (num_envs)
+                # Use current alpha value (detached from grad) for target computation
+                current_alpha = alpha.detach()
+                target_value = reward_batch + gamma * (1 - dones_batch) * (target_q - current_alpha * next_log_probs) #shape (num_envs)
             
             obs_batch = obs_batch.view(-1, number_agents, obs_dim) #shape: (num_envs, number_agents, obs_dim)
             actions_batch = actions_batch.view(-1, number_agents, action_dim) #shape: (num_envs, number_agents, action_dim)
@@ -359,6 +402,26 @@ for episode in range(start_episode, num_episodes):
             actor_loss.backward()
             actor_optimizer.step()
 
+            # Update alpha
+            # Collect current log probs for alpha update
+            with torch.no_grad():
+                _, log_probs_for_alpha = actor(obs_batch.view(-1, obs_dim), rand_batch.view(-1, number_agents))
+                log_probs_for_alpha = log_probs_for_alpha.view(-1, number_agents).sum(dim=-1)
+            
+            # Update alpha to achieve target entropy
+            alpha_loss = -(log_alpha * (log_probs_for_alpha + target_entropy).detach()).mean()
+            alpha_optimizer.zero_grad()
+            alpha_loss.backward()
+            alpha_optimizer.step()
+            
+            # Update alpha value after optimization
+            alpha = log_alpha.exp()
+            
+            # Log alpha metrics
+            alpha_loss_value = alpha_loss.item()
+            alpha_value = alpha.item()
+            episode_alpha_losses.append(alpha_loss_value)
+            episode_alpha_values.append(alpha_value)
 
             with torch.no_grad():
                 # Save actor loss for this batch
@@ -370,6 +433,9 @@ for episode in range(start_episode, num_episodes):
                 writer.add_scalar('Training/critic_loss', critic_loss_value, update_step)
                 writer.add_scalar('Training/q_value', mean_q_value, update_step)
                 writer.add_scalar('Training/target_q', target_q.mean().item(), update_step)
+                writer.add_scalar('Training/alpha_loss', alpha_loss_value, update_step)
+                writer.add_scalar('Training/alpha_value', alpha_value, update_step)
+                writer.add_scalar('Training/log_prob', new_log_probs.mean().item(), update_step)
             
                 # Log gradient norms
                 actor_grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in actor.parameters() if p.grad is not None) ** 0.5
@@ -385,7 +451,8 @@ for episode in range(start_episode, num_episodes):
     # Save checkpoints at regular intervals
     if episode % checkpoint_interval == 0:
         save_checkpoint(actor, critic, target_critic, 
-                       actor_optimizer, critic_optimizer, 
+                       actor_optimizer, critic_optimizer,
+                       alpha, log_alpha, alpha_optimizer, 
                        replay_buffer, episode, global_step, update_step)
     
     # Calculate average episode reward
@@ -396,7 +463,8 @@ for episode in range(start_episode, num_episodes):
         best_reward = avg_episode_reward
         # Save a checkpoint with the best reward
         save_checkpoint(actor, critic, target_critic, 
-                       actor_optimizer, critic_optimizer, 
+                       actor_optimizer, critic_optimizer,
+                       alpha, log_alpha, alpha_optimizer, 
                        replay_buffer, episode, global_step, update_step, best_reward)
     
     if episode % gif_save_interval == 0 and frames:
@@ -438,7 +506,7 @@ for episode in range(start_episode, num_episodes):
         except Exception as e:
             print(f"Failed to save or log GIF: {e}")
     
-    print(f"Episode {episode+1}/{num_episodes} - Avg Reward: {avg_episode_reward:.2f}")
+    print(f"Episode {episode+1}/{num_episodes} - Avg Reward: {avg_episode_reward:.2f}, Alpha: {alpha.item():.6f}")
     writer.add_scalar('Rewards/episode_reward', episode_reward, episode)
     writer.add_scalar('Rewards/avg_episode_reward', avg_episode_reward, episode)
     
@@ -450,6 +518,10 @@ for episode in range(start_episode, num_episodes):
         writer.add_scalar('Training/episode_avg_q_value', sum(episode_q_values) / len(episode_q_values), episode)
     if episode_log_probs:
         writer.add_scalar('Training/episode_avg_log_prob', sum(episode_log_probs) / len(episode_log_probs), episode)
+    if episode_alpha_losses:
+        writer.add_scalar('Training/episode_avg_alpha_loss', sum(episode_alpha_losses) / len(episode_alpha_losses), episode)
+    if episode_alpha_values:
+        writer.add_scalar('Training/episode_avg_alpha', sum(episode_alpha_values) / len(episode_alpha_values), episode)
     
     # Log replay buffer size
     writer.add_scalar('System/replay_buffer_size', replay_buffer.size, episode)
@@ -461,10 +533,9 @@ for episode in range(start_episode, num_episodes):
         for name, param in critic.named_parameters():
             writer.add_histogram(f'Weights/critic_{name}', param.data, episode)
 
-# Save a final checkpoint at the end of training
 save_checkpoint(actor, critic, target_critic, 
-               actor_optimizer, critic_optimizer, 
+               actor_optimizer, critic_optimizer,
+               alpha, log_alpha, alpha_optimizer, 
                replay_buffer, num_episodes-1, global_step, update_step)
 
-# Close the TensorBoard writer when training is done
 writer.close()
