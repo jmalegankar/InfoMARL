@@ -1,36 +1,30 @@
 FROM nvidia/cuda:12.6.0-base-ubuntu22.04
 
-# Set environment variables
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=America/Los_Angeles
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=America/Los_Angeles \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
-# Install system dependencies
+# Install Python 3.12 and pip
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+    software-properties-common \
     curl \
     git \
-    wget \
-    ca-certificates \
-    software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    python3.12 \
-    python3.12-dev \
-    python3.12-distutils \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 python3.12-dev python3.12-venv \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3.12 /usr/local/bin/python3 \
-    && ln -s /usr/bin/python3.12 /usr/local/bin/python
+    && ln -s /usr/bin/python3.12 /usr/local/bin/python \
+    && apt-get clean && rm -rf /var/lib/apt/l
 
-# Create a non-root user
+# Create non-root user
 RUN useradd -m -s /bin/bash user
+USER user
 WORKDIR /home/user
 
 # Install Python packages
-RUN python3.12 -m pip install --no-cache-dir \
+RUN python3 -m pip install --no-cache-dir \
     absl-py==2.2.2 \
     antlr4-python3-runtime==4.9.3 \
     av==13.1.0 \
@@ -80,17 +74,7 @@ RUN python3.12 -m pip install --no-cache-dir \
     vmas==1.5.0 \
     Werkzeug==3.1.3
 
-# Clone only the new_arch folder from the GitHub repository
-RUN git clone --sparse --filter=blob:none https://github.com/jmalegankar/InfoMARL.git -b main_new /home/user/InfoMARL && \
-    cd /home/user/InfoMARL && \
-    git sparse-checkout set new_arch
 
-# Set working directory to the cloned repository's new_arch folder
-WORKDIR /home/user/InfoMARL/new_arch
+COPY ./new_arch /home/user/new_arch
 
-# Set permissions
-RUN chown -R user:user /home/user
-USER user
-
-# Set entry point
-CMD ["python3", "app.py"]
+WORKDIR /home/user/new_arch
