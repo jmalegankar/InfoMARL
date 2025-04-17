@@ -27,9 +27,9 @@ total_steps = 400000000  # Total environment steps to train for
 checkpoint_interval = 500000  # Save checkpoint every N steps
 gif_save_interval = 500000  # Save GIF every N steps
 batch_size = 1024
-gamma = 0.95
+gamma = 0.99
 tau = 0.005
-actor_lr = 1e-4
+actor_lr = 3e-4
 critic_lr = 1e-4
 alpha_lr = 1e-5
 update_every = 96*4  # Update after collecting this many steps
@@ -38,6 +38,7 @@ initial_alpha = 5
 alpha_min = 0.1
 alpha_max = 10.0
 target_entropy = -2
+max_steps_per_episode = 400
 
 checkpoint_dir = os.path.join(log_dir, 'checkpoints')
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -86,7 +87,7 @@ env = vmas.make_env(
     num_envs=num_envs,
     n_agents=number_agents,
     continuous_actions=True,
-    max_steps=400,  # Set max steps to 400 per episode
+    max_steps=max_steps_per_episode,
     seed=seed,
 )
 
@@ -282,14 +283,14 @@ while global_step < total_steps:
                 num_envs=1,
                 n_agents=number_agents,
                 continuous_actions=True,
-                max_steps=None,
+                max_steps=max_steps_per_episode,
                 device=device
             )
             render_obs = render_env.reset()
             frames = []
 
         # Render a frame if it's time to save a GIF
-        if render_env is not None and global_step % gif_save_interval == 0:
+        if render_env is not None:
             try:
                 with torch.no_grad():
                     # Get actions for rendering env
@@ -317,7 +318,7 @@ while global_step < total_steps:
                 print(f"Rendering failed: {e}")
 
         # Complete the GIF and reset render environment if we've recorded a full episode
-        if render_env is not None and len(frames) >= 400:  # Collect frames for the full episode length
+        if render_env is not None and len(frames) >= max_steps_per_episode:  # Collect frames for the full episode length
             try:
                 # Save the GIF
                 gif_path = os.path.join(gifs_dir, f'step_{global_step}.gif')
