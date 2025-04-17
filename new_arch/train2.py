@@ -48,6 +48,7 @@ checkpoint_path = None
 writer.add_text('Hyperparameters/num_envs', str(num_envs))
 writer.add_text('Hyperparameters/number_agents', str(number_agents))
 writer.add_text('Hyperparameters/total_steps', str(total_steps))
+writer.add_text('Hyperparameters/max_steps_per_episode', str(400))
 writer.add_text('Hyperparameters/batch_size', str(batch_size))
 writer.add_text('Hyperparameters/gamma', str(gamma))
 writer.add_text('Hyperparameters/tau', str(tau))
@@ -315,8 +316,8 @@ while global_step < total_steps:
             except Exception as e:
                 print(f"Rendering failed: {e}")
 
-        # Complete the GIF and reset render environment if we have enough frames
-        if render_env is not None and len(frames) >= 100:  # Collect 100 frames for each GIF
+        # Complete the GIF and reset render environment if we've recorded a full episode
+        if render_env is not None and len(frames) >= 400:  # Collect frames for the full episode length
             try:
                 # Save the GIF
                 gif_path = os.path.join(gifs_dir, f'step_{global_step}.gif')
@@ -384,6 +385,13 @@ while global_step < total_steps:
         reward_window.append(step_reward)
         if len(reward_window) > reward_window_size:
             reward_window.pop(0)
+            
+        # Track episode boundaries for more informative logging
+        if dones.any():
+            episode_steps = global_step % 400
+            if episode_steps == 0:
+                episode_steps = 400  # If exactly divisible, it's a complete episode
+            writer.add_scalar('Metrics/episode_length', episode_steps, global_step)
         
         writer.add_scalar('Rewards/step_reward', step_reward, global_step)
         writer.add_scalar('Rewards/running_avg_reward', np.mean(reward_window), global_step)
