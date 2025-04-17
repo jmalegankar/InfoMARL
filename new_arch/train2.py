@@ -23,17 +23,17 @@ writer = SummaryWriter(log_dir=log_dir)
 # HYPERPARAMETERS
 num_envs = 96
 number_agents = 4
-total_steps = 400000000
-checkpoint_interval = 500000
-gif_save_interval = 500000
+total_steps = 400000000  # Total environment steps to train for
+checkpoint_interval = 500000  # Save checkpoint every N steps
+gif_save_interval = 500000  # Save GIF every N steps
 batch_size = 1024
 gamma = 0.95
 tau = 0.005
 actor_lr = 1e-4
 critic_lr = 1e-4
 alpha_lr = 1e-5
-update_every = 96*4
-num_updates = 4
+update_every = 96*4  # Update after collecting this many steps
+num_updates = 4  # Number of updates to perform at each update step
 initial_alpha = 5
 alpha_min = 0.1
 alpha_max = 10.0
@@ -85,7 +85,7 @@ env = vmas.make_env(
     num_envs=num_envs,
     n_agents=number_agents,
     continuous_actions=True,
-    max_steps=None,  # Let the environment run indefinitely
+    max_steps=400,  # Set max steps to 400 per episode
     seed=seed,
 )
 
@@ -129,10 +129,12 @@ alpha_optimizer = optim.Adam([log_alpha], lr=alpha_lr)
 buffer_capacity = 2000000
 replay_buffer = ReplayBuffer(buffer_capacity, obs_dim, action_dim, number_agents, device)
 
-# Add actor graph to tensorboard
-dummy_obs = torch.zeros(1, obs_dim).to(device)
-dummy_rand = torch.zeros(1, number_agents).to(device)
-writer.add_graph(actor, [dummy_obs, dummy_rand])
+# Skip adding actor graph to tensorboard to avoid TracerWarning errors
+# The warnings are caused by non-deterministic operations in the actor network
+# Commented out code:
+# dummy_obs = torch.zeros(1, obs_dim).to(device)
+# dummy_rand = torch.zeros(1, number_agents).to(device)
+# writer.add_graph(actor, [dummy_obs, dummy_rand])
 
 def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs):
     """
