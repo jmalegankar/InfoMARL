@@ -17,50 +17,51 @@ def parser(obs:torch.Tensor, number_agents:int=3):
     return cur_pos, cur_vel, landmarks.contiguous().reshape(-1, number_agents, 2), other_agents.contiguous().reshape(-1, (number_agents - 1), 2)
 
 class RandomAgentPolicy(nn.Module):
-    def __init__(self, number_agents, agent_dim, landmark_dim, other_agent_dim):
+    def __init__(self, number_agents, agent_dim, landmark_dim, other_agent_dim, hidden_dim):
         super().__init__()
         self.number_agents = number_agents
         self.agent_dim = agent_dim
         self.landmark_dim = landmark_dim
         self.other_agent_dim = other_agent_dim
+        self.hidden_dim = hidden_dim
 
         self.cur_agent_embedding = nn.Sequential(
-            nn.Linear(4, 16),
+            nn.Linear(4, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(16, 16)
+            nn.Linear(self.hidden_dim, self.hidden_dim)
         )
         self.landmark_embedding = nn.Sequential(
-            nn.Linear(2, 16),
+            nn.Linear(2, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(16, 16)
+            nn.Linear(self.hidden_dim, self.hidden_dim)
         )
         self.all_agent_embedding = nn.Sequential(
-            nn.Linear(2, 16),
+            nn.Linear(2, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(16, 16)
+            nn.Linear(self.hidden_dim, self.hidden_dim)
         )
 
         self.cross_attention = nn.MultiheadAttention(embed_dim=16, num_heads=1, batch_first=True)
         self.processor = nn.Sequential(
             nn.ReLU(),
-            nn.Linear(16, 16),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(16, 16)
+            nn.Linear(self.hidden_dim, self.hidden_dim)
         )
         self.self_attention = nn.MultiheadAttention(embed_dim=16, num_heads=1, batch_first=True)
         self.mean_processor = nn.Sequential(
-            nn.Linear(32, 32),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
             nn.ReLU(),
-            nn.Linear(32, 32),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
             nn.ReLU(),
-            nn.Linear(32, 2)
+            nn.Linear(self.hidden_dim * 2, 2)
         )
         self.std_processor = nn.Sequential(
-            nn.Linear(32, 32),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim  * 2),
             nn.ReLU(),
-            nn.Linear(32, 32),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
             nn.ReLU(),
-            nn.Linear(32, 2)
+            nn.Linear(self.hidden_dim * 2, 2)
         )
 
     def forward(self, obs, random_numbers):

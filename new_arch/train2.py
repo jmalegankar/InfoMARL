@@ -23,18 +23,18 @@ writer = SummaryWriter(log_dir=log_dir)
 # HYPERPARAMETERS
 num_envs = 96
 number_agents = 4
-total_steps = 400000000  # Total environment steps to train for
-checkpoint_interval = 500000  # Save checkpoint every N steps
-gif_save_interval = 500000  # Save GIF every N steps
+total_steps = 400000000
+checkpoint_interval = 5000
+gif_save_interval = 500
 batch_size = 1024
 gamma = 0.99
 tau = 0.005
 actor_lr = 3e-4
 critic_lr = 1e-4
 alpha_lr = 1e-5
-update_every = 96*4  # Update after collecting this many steps
-num_updates = 4  # Number of updates to perform at each update step
-initial_alpha = 5
+update_every = 96*8 
+num_updates = 4
+initial_alpha = 3
 alpha_min = 0.1
 alpha_max = 10.0
 target_entropy = -2
@@ -96,6 +96,7 @@ all_obs = env.reset()
 obs_dim = all_obs[0][0].shape[0]
 action_dim = 2
 agent_dim = 4
+hidden_dim = 64
 landmark_dim = 2 * number_agents
 other_agent_dim = 2 * (number_agents - 1)
 
@@ -104,7 +105,8 @@ actor = RandomAgentPolicy(
     number_agents, 
     agent_dim=4, 
     landmark_dim=landmark_dim, 
-    other_agent_dim=other_agent_dim
+    other_agent_dim=other_agent_dim,
+    hidden_dim=hidden_dim
 ).to(device)
 
 qvalue_config = {
