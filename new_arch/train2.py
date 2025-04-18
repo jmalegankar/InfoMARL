@@ -32,11 +32,11 @@ tau = 0.005
 actor_lr = 3e-4
 critic_lr = 1e-4
 alpha_lr = 1e-5
-update_every = 96*8 
-num_updates = 4
-initial_alpha = 3
-alpha_min = 0.1
-alpha_max = 10.0
+update_every = 96*5
+num_updates = 1
+initial_alpha = 5.0/4
+alpha_min = 0.1/4
+alpha_max = 10.0/4
 target_entropy = -2
 max_steps_per_episode = 400
 

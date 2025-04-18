@@ -41,14 +41,14 @@ class RandomAgentPolicy(nn.Module):
             nn.Linear(self.hidden_dim, self.hidden_dim)
         )
 
-        self.cross_attention = nn.MultiheadAttention(embed_dim=16, num_heads=1, batch_first=True)
+        self.cross_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
         self.processor = nn.Sequential(
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim)
         )
-        self.self_attention = nn.MultiheadAttention(embed_dim=16, num_heads=1, batch_first=True)
+        self.self_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
         self.mean_processor = nn.Sequential(
             nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
             nn.ReLU(),
@@ -78,12 +78,12 @@ class RandomAgentPolicy(nn.Module):
         # print("Current agent embedding: ", cur_agent_embeddings, cur_agent_embeddings.shape)
         landmark_embeddings = self.landmark_embedding(
             landmarks.reshape(-1, 2)
-        ).reshape(-1, self.number_agents, 16)
+        ).reshape(-1, self.number_agents, self.hidden_dim)
         # print("Landmark embedding: ", landmark_embeddings.shape)
 
         all_agents_embeddings = self.all_agent_embedding(
             all_agents_list.reshape(-1, 2)  
-        ).reshape(-1, self.number_agents, 16)
+        ).reshape(-1, self.number_agents, self.hidden_dim)
         # print("All agents embedding: ", all_agents_embeddings.shape)
 
         agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1,1))
