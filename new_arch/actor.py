@@ -105,7 +105,7 @@ class RandomAgentPolicy(nn.Module):
         # print("Mean: ", mean, mean.shape)
         # print("Std: ", log_std, log_std.shape)
 
-        log_std = torch.clamp(log_std, min=-20, max=2)
+        log_std = torch.clamp(log_std, min=-20, max=5)
         log_std = log_std.exp()
         
         normal = torch.distributions.Normal(mean, log_std)
@@ -113,7 +113,6 @@ class RandomAgentPolicy(nn.Module):
         action = torch.tanh(x_t)
         
         log_prob = normal.log_prob(x_t) - torch.log((1 - action.pow(2)) + 1e-6)
-        log_prob = log_prob.sum(dim=1, keepdim=True)
         
         return action, log_prob
 

@@ -24,20 +24,20 @@ writer = SummaryWriter(log_dir=log_dir)
 num_envs = 96
 number_agents = 4
 total_steps = 400000000
-checkpoint_interval = 5000
-gif_save_interval = 500
+checkpoint_interval = 50000
+gif_save_interval = 5000
 batch_size = 1024
 gamma = 0.99
 tau = 0.005
-actor_lr = 3e-4
-critic_lr = 1e-4
+actor_lr = 1e-4
+critic_lr = 3e-4
 alpha_lr = 1e-5
 update_every = 96*5
 num_updates = 1
-initial_alpha = 5.0/4
-alpha_min = 0.1/4
-alpha_max = 10.0/4
-target_entropy = -2
+initial_alpha = 5.0
+alpha_min = 0.1
+alpha_max = 10.0
+target_entropy = -0.2
 max_steps_per_episode = 400
 
 checkpoint_dir = os.path.join(log_dir, 'checkpoints')
@@ -119,15 +119,15 @@ critic = RAP_qvalue(qvalue_config).to(device)
 
 target_critic = RAP_qvalue(qvalue_config).to(device)
 target_critic.load_state_dict(critic.state_dict())
+target_critic.eval()
 
 # Optimizers
 actor_optimizer = optim.Adam(actor.parameters(), lr=actor_lr)
 critic_optimizer = optim.Adam(critic.parameters(), lr=critic_lr)
 
 # Temperature parameter alpha
-log_alpha = torch.tensor(np.log(initial_alpha), dtype=torch.float32, requires_grad=True, device=device)
-alpha = torch.clamp(log_alpha.exp(), min=alpha_min, max=alpha_max) 
-alpha_optimizer = optim.Adam([log_alpha], lr=alpha_lr)
+alpha = torch.tensor(initial_alpha, device=device, requires_grad=True, dtype=torch.float32) 
+alpha_optimizer = optim.Adam([alpha], lr=alpha_lr)
 
 # Replay buffer
 buffer_capacity = 2000000
@@ -153,7 +153,7 @@ def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs)
     return permuted_rand
 
 def save_checkpoint(actor, critic, target_critic, actor_optimizer, critic_optimizer, 
-                   alpha, log_alpha, alpha_optimizer, replay_buffer, global_step, 
+                   alpha, alpha_optimizer, replay_buffer, global_step, 
                    update_step, best_reward=None):
     """
     Save a checkpoint of the training state.
@@ -165,7 +165,6 @@ def save_checkpoint(actor, critic, target_critic, actor_optimizer, critic_optimi
         'actor_optimizer_state_dict': actor_optimizer.state_dict(),
         'critic_optimizer_state_dict': critic_optimizer.state_dict(),
         'alpha': alpha.item(),
-        'log_alpha': log_alpha.item(),
         'alpha_optimizer_state_dict': alpha_optimizer.state_dict(),
         'replay_buffer': replay_buffer.get_save_state(),
         'global_step': global_step,
@@ -223,7 +222,6 @@ if resume_training:
         # Load alpha related parameters
         loaded_alpha = torch.tensor(checkpoint['alpha'], device=device)
         loaded_alpha = torch.clamp(loaded_alpha, min=alpha_min, max=alpha_max)
-        log_alpha = torch.log(loaded_alpha).requires_grad_(True).to(device)
         alpha = loaded_alpha
         alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer_state_dict'])
         
@@ -418,7 +416,7 @@ while global_step < total_steps:
             
             # Get actions and log probs for next state
             next_actions, next_log_probs = actor(next_obs_batch, rand_batch)
-            next_log_probs = next_log_probs.view(-1, number_agents).sum(dim=-1)
+            next_log_probs = next_log_probs.view(-1, number_agents*action_dim).sum(dim=-1)
             
             # Reshape for critic input
             next_obs_batch = next_obs_batch.view(-1, number_agents, obs_dim)
@@ -428,8 +426,7 @@ while global_step < total_steps:
             with torch.no_grad():
                 target_q1, target_q2 = target_critic(next_obs_batch, next_actions)
                 target_q = torch.min(target_q1, target_q2).view(-1)
-                current_alpha = alpha.detach()
-                target_value = reward_batch + gamma * (1 - dones_batch) * (target_q - current_alpha * next_log_probs)
+                target_value = reward_batch + gamma * (1 - dones_batch) * (target_q - alpha * next_log_probs)
             
             # Compute current Q values
             obs_batch = obs_batch.view(-1, number_agents, obs_dim)
@@ -456,7 +453,7 @@ while global_step < total_steps:
             new_actions, new_log_probs = actor(obs_batch, rand_batch)
             obs_batch = obs_batch.view(-1, number_agents, obs_dim)
             new_actions = new_actions.view(-1, number_agents, action_dim)
-            new_log_probs = new_log_probs.view(-1, number_agents).sum(dim=-1)
+            new_log_probs = new_log_probs.view(-1, number_agents*action_dim).sum(dim=-1)
             
             actor_q1, actor_q2 = critic(obs_batch, new_actions)
             actor_q = torch.min(actor_q1, actor_q2)
@@ -475,12 +472,13 @@ while global_step < total_steps:
                 _, log_probs_for_alpha = actor(obs_batch.view(-1, obs_dim), rand_batch.view(-1, number_agents))
                 log_probs_for_alpha = log_probs_for_alpha.view(-1, number_agents).sum(dim=-1)
             
-            alpha_loss = -(log_alpha * (log_probs_for_alpha + target_entropy).detach()).mean()
+            alpha_loss = -(alpha.log() * (log_probs_for_alpha + target_entropy).detach()).mean()
             alpha_optimizer.zero_grad()
             alpha_loss.backward()
             alpha_optimizer.step()
             
-            alpha = torch.clamp(log_alpha.exp(), min=alpha_min, max=alpha_max)
+            with torch.no_grad():
+                alpha.clamp_(alpha_min, alpha_max)
             
             # Log alpha metrics
             alpha_loss_value = alpha_loss.item()
@@ -520,12 +518,12 @@ while global_step < total_steps:
             best_reward = avg_reward
             save_checkpoint(actor, critic, target_critic, 
                           actor_optimizer, critic_optimizer,
-                          alpha, log_alpha, alpha_optimizer, 
+                          alpha, alpha_optimizer, 
                           replay_buffer, global_step, update_step, best_reward)
         else:
             save_checkpoint(actor, critic, target_critic, 
                           actor_optimizer, critic_optimizer,
-                          alpha, log_alpha, alpha_optimizer, 
+                          alpha, alpha_optimizer, 
                           replay_buffer, global_step, update_step)
         
         # Log summary metrics
@@ -574,7 +572,7 @@ while global_step < total_steps:
 # Final checkpoint
 save_checkpoint(actor, critic, target_critic, 
                actor_optimizer, critic_optimizer,
-               alpha, log_alpha, alpha_optimizer, 
+               alpha, alpha_optimizer, 
                replay_buffer, global_step, update_step)
 
 print(f"Training completed after {global_step} steps.")
