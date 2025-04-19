@@ -30,15 +30,16 @@ batch_size = 1024
 gamma = 0.99
 tau = 0.005
 actor_lr = 1e-4
-critic_lr = 3e-4
+critic_lr = 1e-4
 alpha_lr = 1e-5
 update_every = 96*5
 num_updates = 1
-initial_alpha = 5.0
+initial_alpha = 0.5
 alpha_min = 0.1
-alpha_max = 10.0
-target_entropy = -0.2
+alpha_max = 1.0
+target_entropy = -2.0
 max_steps_per_episode = 400
+critic_only_steps = 10
 
 checkpoint_dir = os.path.join(log_dir, 'checkpoints')
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -96,7 +97,7 @@ all_obs = env.reset()
 obs_dim = all_obs[0][0].shape[0]
 action_dim = 2
 agent_dim = 4
-hidden_dim = 64
+hidden_dim = 32
 landmark_dim = 2 * number_agents
 other_agent_dim = 2 * (number_agents - 1)
 
@@ -455,17 +456,19 @@ while global_step < total_steps:
             new_actions = new_actions.view(-1, number_agents, action_dim)
             new_log_probs = new_log_probs.view(-1, number_agents*action_dim).sum(dim=-1)
             
-            actor_q1, actor_q2 = critic(obs_batch, new_actions)
-            actor_q = torch.min(actor_q1, actor_q2)
-            actor_loss = (alpha * new_log_probs - actor_q).mean()
-            
-            actor_optimizer.zero_grad()
-            actor_loss.backward()
-            actor_optimizer.step()
-            
-            # Log actor metrics
-            actor_loss_value = actor_loss.item()
-            update_metrics['actor_losses'].append(actor_loss_value)
+            if update_step > critic_only_steps:
+                actor_q1, actor_q2 = target_critic(obs_batch, new_actions)
+                actor_q = torch.min(actor_q1, actor_q2)
+                actor_loss = (alpha * new_log_probs - actor_q).mean()
+                
+                actor_optimizer.zero_grad()
+                actor_loss.backward()
+                actor_optimizer.step()
+                
+                # Log actor metrics
+                actor_loss_value = actor_loss.item()
+                update_metrics['actor_losses'].append(actor_loss_value)
+                writer.add_scalar('Training/actor_loss', actor_loss_value, update_step)
             
             # Update alpha
             with torch.no_grad():
@@ -487,7 +490,6 @@ while global_step < total_steps:
             update_metrics['alpha_values'].append(alpha_value)
             
             # Log training metrics to TensorBoard
-            writer.add_scalar('Training/actor_loss', actor_loss_value, update_step)
             writer.add_scalar('Training/critic_loss', critic_loss_value, update_step)
             writer.add_scalar('Training/q_value', mean_q_value, update_step)
             writer.add_scalar('Training/target_q', target_q.mean().item(), update_step)

@@ -64,6 +64,8 @@ class RandomAgentPolicy(nn.Module):
             nn.Linear(self.hidden_dim * 2, 2)
         )
 
+        self.std_processor[-1].weight.data.fill_(-1.0)
+
     def forward(self, obs, random_numbers):
         cur_pos, cur_vel, landmarks, other_agents = parser(obs, self.number_agents)
         batch_size = cur_pos.shape[0]
@@ -105,7 +107,7 @@ class RandomAgentPolicy(nn.Module):
         # print("Mean: ", mean, mean.shape)
         # print("Std: ", log_std, log_std.shape)
 
-        log_std = torch.clamp(log_std, min=-20, max=5)
+        log_std = torch.clamp(log_std, min=-20, max=2)
         log_std = log_std.exp()
         
         normal = torch.distributions.Normal(mean, log_std)
