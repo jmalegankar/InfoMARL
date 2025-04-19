@@ -27,20 +27,28 @@ class RandomAgentPolicy(nn.Module):
 
         self.cur_agent_embedding = nn.Sequential(
             nn.Linear(4, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim)
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim)
         )
+        
         self.landmark_embedding = nn.Sequential(
             nn.Linear(2, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim)
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim)
         )
+        
         self.all_agent_embedding = nn.Sequential(
             nn.Linear(2, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim)
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim)
         )
-
+        
         self.cross_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
         self.processor = nn.Sequential(
             nn.ReLU(),
