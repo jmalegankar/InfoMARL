@@ -21,8 +21,8 @@ log_dir = os.path.join('runs', f'vmas_simple_spread_{current_time}')
 writer = SummaryWriter(log_dir=log_dir)
 
 # HYPERPARAMETERS
-num_envs = 96
-number_agents = 4
+num_envs = 32
+number_agents = 2
 total_steps = 400000000
 checkpoint_interval = 500000
 gif_save_interval = 50000
