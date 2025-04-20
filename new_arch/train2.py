@@ -24,22 +24,22 @@ writer = SummaryWriter(log_dir=log_dir)
 num_envs = 96
 number_agents = 4
 total_steps = 400000000
-checkpoint_interval = 50000
-gif_save_interval = 5000
+checkpoint_interval = 500000
+gif_save_interval = 50000
 batch_size = 1024
 gamma = 0.99
 tau = 0.005
-actor_lr = 1e-4
-critic_lr = 1e-4
-alpha_lr = 1e-5
+actor_lr = 1e-3
+critic_lr = 1e-3
+alpha_lr = 1e-4
 update_every = 96*5
 num_updates = 1
-initial_alpha = 0.5
+initial_alpha = 0.2
 alpha_min = 0.1
 alpha_max = 1.0
 target_entropy = -2.0
 max_steps_per_episode = 400
-critic_only_steps = 10
+critic_actor_update_interval = 2
 
 checkpoint_dir = os.path.join(log_dir, 'checkpoints')
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -73,7 +73,7 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 # Set seed for reproducibility
-seed = 42
+seed = 69
 set_seed(seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -97,7 +97,7 @@ all_obs = env.reset()
 obs_dim = all_obs[0][0].shape[0]
 action_dim = 2
 agent_dim = 4
-hidden_dim = 32
+hidden_dim = 64
 landmark_dim = 2 * number_agents
 other_agent_dim = 2 * (number_agents - 1)
 
@@ -364,7 +364,7 @@ while global_step < total_steps:
         obs_next_batched = torch.stack(all_obs_next, dim=1).view(number_agents, num_envs, -1).transpose(1,0).to(device)
         obs_batched = obs_batched.view(number_agents, num_envs, -1).transpose(1,0)
         actions_batched = actions_batched.transpose(1,0)
-        rewards_batched = rewards[0]  # Shape: (num_envs, number_agents) -> (num_envs)
+        rewards_batched = rewards[0]  # Shape: (number_agents, num_envs) -> (num_envs)
         rand_batched = rand_batched.view(number_agents, num_envs, -1).transpose(1,0)
         dones_batched = dones
         
@@ -401,7 +401,7 @@ while global_step < total_steps:
         global_step += num_envs  # Increment by number of environments
     
     # Perform update if we have enough samples and it's time to update
-    if replay_buffer.size >= 10 * batch_size and global_step % update_every == 0:
+    if replay_buffer.size >= 100 * batch_size and global_step % update_every == 0:
         actor.train()
         critic.train()
         
@@ -417,7 +417,7 @@ while global_step < total_steps:
             
             # Get actions and log probs for next state
             next_actions, next_log_probs = actor(next_obs_batch, rand_batch)
-            next_log_probs = next_log_probs.view(-1, number_agents*action_dim).sum(dim=-1)
+            next_log_probs = next_log_probs.view(-1, number_agents).sum(dim=-1)
             
             # Reshape for critic input
             next_obs_batch = next_obs_batch.view(-1, number_agents, obs_dim)
@@ -454,12 +454,12 @@ while global_step < total_steps:
             new_actions, new_log_probs = actor(obs_batch, rand_batch)
             obs_batch = obs_batch.view(-1, number_agents, obs_dim)
             new_actions = new_actions.view(-1, number_agents, action_dim)
-            new_log_probs = new_log_probs.view(-1, number_agents*action_dim).sum(dim=-1)
+            new_log_probs = new_log_probs.view(-1, number_agents)
             
-            if update_step > critic_only_steps:
+            if update_step % critic_actor_update_interval == 0:
                 actor_q1, actor_q2 = target_critic(obs_batch, new_actions)
-                actor_q = torch.min(actor_q1, actor_q2)
-                actor_loss = (alpha * new_log_probs - actor_q).mean()
+                actor_q = torch.min(actor_q1, actor_q2).view(-1, 1)
+                actor_loss = (alpha * new_log_probs - actor_q).sum(dim=-1).mean()
                 
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
@@ -470,31 +470,32 @@ while global_step < total_steps:
                 update_metrics['actor_losses'].append(actor_loss_value)
                 writer.add_scalar('Training/actor_loss', actor_loss_value, update_step)
             
-            # Update alpha
-            with torch.no_grad():
-                _, log_probs_for_alpha = actor(obs_batch.view(-1, obs_dim), rand_batch.view(-1, number_agents))
-                log_probs_for_alpha = log_probs_for_alpha.view(-1, number_agents).sum(dim=-1)
-            
-            alpha_loss = -(alpha.log() * (log_probs_for_alpha + target_entropy).detach()).mean()
-            alpha_optimizer.zero_grad()
-            alpha_loss.backward()
-            alpha_optimizer.step()
-            
-            with torch.no_grad():
-                alpha.clamp_(alpha_min, alpha_max)
-            
-            # Log alpha metrics
-            alpha_loss_value = alpha_loss.item()
-            alpha_value = alpha.item()
-            update_metrics['alpha_losses'].append(alpha_loss_value)
-            update_metrics['alpha_values'].append(alpha_value)
+                # Update alpha
+                with torch.no_grad():
+                    _, log_probs_for_alpha = actor(obs_batch.view(-1, obs_dim), rand_batch.view(-1, number_agents))
+                    log_probs_for_alpha = log_probs_for_alpha.view(-1, number_agents).sum(dim=-1)
+                
+                alpha_loss = -(alpha.log() * (log_probs_for_alpha + target_entropy).detach()).mean()
+                alpha_optimizer.zero_grad()
+                alpha_loss.backward()
+                alpha_optimizer.step()
+                
+                with torch.no_grad():
+                    alpha.clamp_(alpha_min, alpha_max)
+                
+                # Log alpha metrics
+                alpha_loss_value = alpha_loss.item()
+                alpha_value = alpha.item()
+                update_metrics['alpha_losses'].append(alpha_loss_value)
+                update_metrics['alpha_values'].append(alpha_value)
+
+                writer.add_scalar('Training/alpha_loss', alpha_loss_value, update_step)
+                writer.add_scalar('Training/alpha_value', alpha_value, update_step)
             
             # Log training metrics to TensorBoard
             writer.add_scalar('Training/critic_loss', critic_loss_value, update_step)
             writer.add_scalar('Training/q_value', mean_q_value, update_step)
             writer.add_scalar('Training/target_q', target_q.mean().item(), update_step)
-            writer.add_scalar('Training/alpha_loss', alpha_loss_value, update_step)
-            writer.add_scalar('Training/alpha_value', alpha_value, update_step)
             writer.add_scalar('Training/log_prob', new_log_probs.mean().item(), update_step)
             
             # Log gradient norms
