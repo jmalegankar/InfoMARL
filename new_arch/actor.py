@@ -37,20 +37,21 @@ class RandomAgentPolicy(nn.Module):
             nn.Linear(2, self.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.LayerNorm(self.hidden_dim),
+            nn.ReLU(),
+        )
+
+        self.landmark_value = nn.Sequential(
+            nn.Linear(2, self.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.LayerNorm(self.hidden_dim)
+            nn.ReLU(),
         )
         
         self.all_agent_embedding = nn.Sequential(
             nn.Linear(2, self.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.LayerNorm(self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.LayerNorm(self.hidden_dim)
         )
         
         self.cross_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
@@ -58,7 +59,8 @@ class RandomAgentPolicy(nn.Module):
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim)
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
         )
         self.self_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
         self.mean_processor = nn.Sequential(
@@ -75,59 +77,76 @@ class RandomAgentPolicy(nn.Module):
             nn.ReLU(),
             nn.Linear(self.hidden_dim * 2, 2)
         )
-
-        self.std_processor[-1].bias.data.fill_(-0.1)
-
-    def forward(self, obs, random_numbers):
+    
+    def get_mean_std(self, obs, random_numbers):
         cur_pos, cur_vel, landmarks, other_agents = parser(obs, self.number_agents)
         batch_size = cur_pos.shape[0]
-        # print("Random numbers: ", random_numbers.shape)
         cur_agent = torch.cat((cur_pos, cur_vel), dim=-1)
-        # print("Current agent: ",cur_agent.shape)
         all_agents_list = torch.cat((cur_pos.unsqueeze(1), other_agents), dim=1)
-        # print("All agents list: ", all_agents_list, all_agents_list.shape)
 
  
         cur_agent_embeddings = self.cur_agent_embedding(cur_agent)
-        # print("Current agent embedding: ", cur_agent_embeddings, cur_agent_embeddings.shape)
         landmark_embeddings = self.landmark_embedding(
             landmarks.reshape(-1, 2)
         ).reshape(-1, self.number_agents, self.hidden_dim)
-        # print("Landmark embedding: ", landmark_embeddings.shape)
+
+        landmark_value = self.landmark_value(
+            landmarks.reshape(-1, 2)
+        ).reshape(-1, self.number_agents, self.hidden_dim)
 
         all_agents_embeddings = self.all_agent_embedding(
             all_agents_list.reshape(-1, 2)  
         ).reshape(-1, self.number_agents, self.hidden_dim)
-        # print("All agents embedding: ", all_agents_embeddings.shape)
 
         agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1,1))
         attention_output, _ = self.cross_attention(
             query=all_agents_embeddings,
             key=landmark_embeddings,
-            value=landmark_embeddings,
+            value=landmark_value,
             attn_mask = agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1),
             need_weights=False
         )
 
         attention_output = self.processor(attention_output)
         attention_output = self.self_attention(attention_output, attention_output, attention_output, need_weights=False)[0].mean(dim=-2)
-        # print("Attention output: ", attention_output, attention_output.shape)
 
         latent = torch.concat((attention_output, cur_agent_embeddings), dim=-1)
         mean = self.mean_processor(latent)
         log_std = self.std_processor(latent)
-        # print("Mean: ", mean, mean.shape)
-        # print("Std: ", log_std, log_std.shape)
+        return mean, log_std
+
+    def forward(self, obs, random_numbers, explore=False):
+
+        mean, log_std = self.get_mean_std(obs, random_numbers)
 
         log_std = torch.clamp(log_std, min=-5, max=1)
         log_std = log_std.exp()
         
         normal = torch.distributions.Normal(mean, log_std)
-        x_t = normal.rsample()
+
+        if explore:
+            log_std = log_std + torch.rand_like(log_std) * 2
+            mean = mean * 0.01
+            x_t = mean + log_std * torch.randn_like(log_std)
+        else:
+            x_t = normal.rsample()
+        
         action = torch.tanh(x_t)
         
         log_prob = normal.log_prob(x_t) - torch.log((1 - action.pow(2)) + 1e-8)
         
         return action, log_prob.sum(dim=-1).clamp(max=0)
+    
+    def get_log_prob(self, obs, random_numbers, action):
+        mean, log_std = self.get_mean_std(obs, random_numbers)
+        log_std = torch.clamp(log_std, min=-5, max=1)
+        log_std = log_std.exp()
+        
+        normal = torch.distributions.Normal(mean, log_std)
 
+        # Inverse tanh
+        x_t = torch.atanh(action.clamp(-1 + 1e-6, 1 - 1e-6))
+        log_prob = normal.log_prob(x_t) - torch.log((1 - action.pow(2)) + 1e-8)
+        
+        return log_prob.sum(dim=-1).clamp(max=0)
 

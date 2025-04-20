@@ -19,6 +19,31 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
+
+class QNetwork(nn.Module):
+    def __init__(self, qvalue_config):
+        super().__init__()
+
+        self.device = qvalue_config["device"]
+        self.na = qvalue_config["n_agents"]
+        self.obs_dim = qvalue_config["observation_dim_per_agent"]
+        self.act_dim = qvalue_config["action_dim_per_agent"]
+
+        input_size = (self.obs_dim + self.act_dim) * self.na
+        hidden_sizes = [input_size * 2, input_size, input_size, 1]
+        self.q1 = MLP(input_size, hidden_sizes)
+        self.q2 = MLP(input_size, hidden_sizes)
+    
+    def forward(self, observation, action):
+        observation = observation.view(observation.size(0), -1)
+        action = action.view(action.size(0), -1)
+        x = torch.cat([observation, action], dim=-1)
+        q1 = self.q1(x)
+        q2 = self.q2(x)
+        return q1, q2
+
+
+
 class RAP_qvalue(nn.Module):
     def __init__(self, qvalue_config):
         super().__init__()

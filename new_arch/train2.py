@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import vmas
 from actor import RandomAgentPolicy
-from critic import RAP_qvalue
+from critic import RAP_qvalue, QNetwork
 from buffer import ReplayBuffer
 
 from torch.utils.tensorboard import SummaryWriter
@@ -21,17 +21,17 @@ log_dir = os.path.join('runs', f'vmas_simple_spread_{current_time}')
 writer = SummaryWriter(log_dir=log_dir)
 
 # HYPERPARAMETERS
-num_envs = 32
-number_agents = 2
-total_steps = 400000000
+num_envs = 96
+number_agents = 4
+total_steps = 40000000
 checkpoint_interval = 500000
 gif_save_interval = 50000
 batch_size = 1024
 gamma = 0.99
 tau = 0.005
-actor_lr = 1e-3
+actor_lr = 1e-4
 critic_lr = 1e-3
-alpha_lr = 1e-4
+alpha_lr = 1e-5
 update_every = 96*5
 num_updates = 1
 initial_alpha = 0.2
@@ -39,7 +39,7 @@ alpha_min = 0.1
 alpha_max = 1.0
 target_entropy = -2.0
 max_steps_per_episode = 400
-critic_actor_update_interval = 2
+critic_actor_update_interval = 30
 
 checkpoint_dir = os.path.join(log_dir, 'checkpoints')
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -116,9 +116,9 @@ qvalue_config = {
     "observation_dim_per_agent": obs_dim,
     "action_dim_per_agent": action_dim
 }
-critic = RAP_qvalue(qvalue_config).to(device)
+critic = QNetwork(qvalue_config).to(device)
 
-target_critic = RAP_qvalue(qvalue_config).to(device)
+target_critic = QNetwork(qvalue_config).to(device)
 target_critic.load_state_dict(critic.state_dict())
 target_critic.eval()
 
@@ -268,6 +268,9 @@ while global_step < total_steps:
         env_random_numbers = torch.rand(num_envs, number_agents, device=device)
         permuted_rand = get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs)
         rand_batched = permuted_rand.view(-1, number_agents)
+
+        # explore_bool = np.random.rand() < 1 - float(global_step) / total_steps
+
         actions_batched, log_probs = actor(obs_batched, rand_batched)
         
         # Track log probabilities
@@ -414,17 +417,17 @@ while global_step < total_steps:
             actions_batch = actions_batch.view(-1, action_dim)
             next_obs_batch = next_obs_batch.view(-1, obs_dim)
             rand_batch = rand_batch.view(-1, number_agents)
-            
-            # Get actions and log probs for next state
-            next_actions, next_log_probs = actor(next_obs_batch, rand_batch)
-            next_log_probs = next_log_probs.view(-1, number_agents).sum(dim=-1)
-            
-            # Reshape for critic input
-            next_obs_batch = next_obs_batch.view(-1, number_agents, obs_dim)
-            next_actions = next_actions.view(-1, number_agents, action_dim)
-            
+
             # Compute target Q values
             with torch.no_grad():
+                # Get actions and log probs for next state
+                next_actions, next_log_probs = actor(next_obs_batch, rand_batch)
+                next_log_probs = next_log_probs.view(-1, number_agents).sum(dim=-1)
+                
+                # Reshape for critic input
+                next_obs_batch = next_obs_batch.view(-1, number_agents, obs_dim)
+                next_actions = next_actions.view(-1, number_agents, action_dim)
+
                 target_q1, target_q2 = target_critic(next_obs_batch, next_actions)
                 target_q = torch.min(target_q1, target_q2).view(-1)
                 target_value = reward_batch + gamma * (1 - dones_batch) * (target_q - alpha * next_log_probs)
@@ -447,39 +450,38 @@ while global_step < total_steps:
             mean_q_value = (current_q1.mean().item() + current_q2.mean().item()) / 2
             update_metrics['critic_losses'].append(critic_loss_value)
             update_metrics['q_values'].append(mean_q_value)
-            
-            # Compute actor loss
-            obs_batch = obs_batch.view(-1, obs_dim)
-            rand_batch = rand_batch.view(-1, number_agents)
-            new_actions, new_log_probs = actor(obs_batch, rand_batch)
-            obs_batch = obs_batch.view(-1, number_agents, obs_dim)
-            new_actions = new_actions.view(-1, number_agents, action_dim)
-            new_log_probs = new_log_probs.view(-1, number_agents)
-            
+                        
             if update_step % critic_actor_update_interval == 0:
-                actor_q1, actor_q2 = target_critic(obs_batch, new_actions)
+                # Compute actor loss
+                obs_batch = obs_batch.view(-1, obs_dim)
+                rand_batch = rand_batch.view(-1, number_agents)
+                new_log_probs = actor.get_log_prob(obs_batch, rand_batch, actions_batch.view(-1, action_dim))
+                obs_batch = obs_batch.view(-1, number_agents, obs_dim)
+                new_log_probs = new_log_probs.view(-1, number_agents)
+
+                actor_q1, actor_q2 = critic(obs_batch, actions_batch)
                 actor_q = torch.min(actor_q1, actor_q2).view(-1, 1)
                 actor_loss = (alpha * new_log_probs - actor_q).sum(dim=-1).mean()
+
+                # Calculate alpha loss
+                alpha_log_probs = new_log_probs.clone().detach().view(-1, number_agents).sum(dim=-1)
+                alpha_loss = -(alpha.log() * (alpha_log_probs + target_entropy).detach()).mean()
                 
+
+                loss = actor_loss + alpha_loss
+
+                # Update actor and alpha
                 actor_optimizer.zero_grad()
-                actor_loss.backward()
+                alpha_optimizer.zero_grad()
+                loss.backward()
                 actor_optimizer.step()
+                alpha_optimizer.step()
                 
                 # Log actor metrics
                 actor_loss_value = actor_loss.item()
                 update_metrics['actor_losses'].append(actor_loss_value)
                 writer.add_scalar('Training/actor_loss', actor_loss_value, update_step)
             
-                # Update alpha
-                with torch.no_grad():
-                    _, log_probs_for_alpha = actor(obs_batch.view(-1, obs_dim), rand_batch.view(-1, number_agents))
-                    log_probs_for_alpha = log_probs_for_alpha.view(-1, number_agents).sum(dim=-1)
-                
-                alpha_loss = -(alpha.log() * (log_probs_for_alpha + target_entropy).detach()).mean()
-                alpha_optimizer.zero_grad()
-                alpha_loss.backward()
-                alpha_optimizer.step()
-                
                 with torch.no_grad():
                     alpha.clamp_(alpha_min, alpha_max)
                 
