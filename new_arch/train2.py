@@ -269,9 +269,9 @@ while global_step < total_steps:
         permuted_rand = get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs)
         rand_batched = permuted_rand.view(-1, number_agents)
 
-        # explore_bool = np.random.rand() < 1 - float(global_step) / total_steps
+        explore_bool = np.random.rand() < 1 - float(global_step) / total_steps
 
-        actions_batched, log_probs = actor(obs_batched, rand_batched)
+        actions_batched, log_probs = actor(obs_batched, rand_batched, explore=explore_bool)
         
         # Track log probabilities
         avg_log_prob = log_probs.mean().item()
@@ -455,11 +455,11 @@ while global_step < total_steps:
                 # Compute actor loss
                 obs_batch = obs_batch.view(-1, obs_dim)
                 rand_batch = rand_batch.view(-1, number_agents)
-                new_log_probs = actor.get_log_prob(obs_batch, rand_batch, actions_batch.view(-1, action_dim))
+                new_actions, new_log_probs = actor(obs_batch, rand_batch)
                 obs_batch = obs_batch.view(-1, number_agents, obs_dim)
                 new_log_probs = new_log_probs.view(-1, number_agents)
 
-                actor_q1, actor_q2 = critic(obs_batch, actions_batch)
+                actor_q1, actor_q2 = critic(obs_batch, new_actions)
                 actor_q = torch.min(actor_q1, actor_q2).view(-1, 1)
                 actor_loss = (alpha * new_log_probs - actor_q).sum(dim=-1).mean()
 
