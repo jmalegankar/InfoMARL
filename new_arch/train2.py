@@ -456,6 +456,7 @@ while global_step < total_steps:
                 obs_batch = obs_batch.view(-1, obs_dim)
                 rand_batch = rand_batch.view(-1, number_agents)
                 new_actions, new_log_probs = actor(obs_batch, rand_batch)
+                new_actions = new_actions.view(-1, number_agents, action_dim)
                 obs_batch = obs_batch.view(-1, number_agents, obs_dim)
                 new_log_probs = new_log_probs.view(-1, number_agents)
 
