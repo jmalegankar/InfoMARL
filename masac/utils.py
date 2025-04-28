@@ -14,7 +14,7 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 def save_checkpoint(checkpoint_dir, actor, critic, target_critic, actor_optimizer, critic_optimizer, 
-                   alpha, alpha_optimizer, replay_buffer, global_step, update_step, best_reward=None):
+                   alpha, alpha_optimizer, replay_buffer, global_step, update_step):
     """
     Save a checkpoint of the training state.
     """
@@ -30,24 +30,12 @@ def save_checkpoint(checkpoint_dir, actor, critic, target_critic, actor_optimize
         'global_step': global_step,
         'update_step': update_step,
         'seed': seed,
-        'best_reward': best_reward
     }
     
     # Regular checkpoint
     checkpoint_filename = os.path.join(checkpoint_dir, f'checkpoint_step_{global_step}.pt')
     torch.save(checkpoint, checkpoint_filename)
-    print(f"Checkpoint saved to {checkpoint_filename}")
-    
-    # Always save the latest checkpoint for easy resume
-    latest_checkpoint = os.path.join(checkpoint_dir, 'checkpoint_latest.pt')
-    torch.save(checkpoint, latest_checkpoint)
-    
-    # If this is a best reward checkpoint, save it separately
-    if best_reward is not None:
-        best_checkpoint = os.path.join(checkpoint_dir, 'checkpoint_best.pt')
-        torch.save(checkpoint, best_checkpoint)
-        print(f"New best reward {best_reward:.2f} - saved best checkpoint")
-
+    print(f"Checkpoint saved to {checkpoint_filename}")    
 
 def load_checkpoint(checkpoint, seed, actor, critic, target_critic, actor_optimizer,
                     critic_optimizer, alpha, alpha_optimizer, replay_buffer, device):
@@ -69,6 +57,5 @@ def load_checkpoint(checkpoint, seed, actor, critic, target_critic, actor_optimi
     replay_buffer.load_state(checkpoint['replay_buffer'])
     global_step = checkpoint['global_step']
     update_step = checkpoint['update_step']
-    best_reward = checkpoint.get('best_reward', None)
 
-    return global_step, update_step, best_reward
+    return global_step, update_step

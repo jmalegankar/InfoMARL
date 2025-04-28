@@ -9,8 +9,9 @@ from torch.utils.tensorboard import SummaryWriter
 import os
 
 import utils
-import config
 import logging
+
+import tqdm
 
 
 def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs):
@@ -48,7 +49,6 @@ class Trainer:
         self.env = None
         self.global_step = 0
         self.update_step = 0
-        self.best_reward = None
         self.device = None
 
         # Logging parameters
@@ -195,7 +195,6 @@ class Trainer:
             self.buffer,
             self.global_step,
             self.update_step,
-            best_reward=self.best_reward
         )
 
     
@@ -221,7 +220,7 @@ class Trainer:
         checkpoint = torch.load(checkpoint_path, map_location=device)
 
 
-        self.global_step, self.update_step, self.best_reward = utils.load_checkpoint(
+        self.global_step, self.update_step = utils.load_checkpoint(
             checkpoint,
             self.config.SEED,
             self.actor,
@@ -236,7 +235,7 @@ class Trainer:
         )
         del checkpoint
         self.logger.info("Checkpoint loaded successfully.")
-        self.logger.info("Global step: %d, Update step: %d, Best reward: %s", self.global_step, self.update_step, self.best_reward)
+        self.logger.info("Global step: %d, Update step: %d", self.global_step, self.update_step)
     
     def calculate_actor_pass(self, obs, rand_nums=None):
         obs = obs.view(-1, self._obs_dim)
@@ -282,11 +281,36 @@ class Trainer:
         # Sample a batch from the buffer
         obs, actions, rewards, next_obs, dones, rand_nums = self.buffer.sample(self.config.BATCH_SIZE, self.device)
         rand_nums = rand_nums.view(-1, self.config.NUMBER_AGENTS)
-        
-        # Reshape the batch for actor pass
 
+        # Compute target values
+        target_values = self.compute_target_values(next_obs, rewards, dones)
+        # Compute critic loss
+        critic_loss = self.compute_critic_loss(obs, actions, target_values)
+        # Update critic
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
+        # Compute actor and alpha loss if updating actor and alpha
+        if self.update_step % self.config.UPDATE_ACTOR_EVERY_CRITIC == 0:
+            # Calculate actor loss and alpha loss
+            actor_loss, alpha_loss = self.compute_actor_alpha_loss(obs, rand_nums)
+            # Sum up the loss for common backpropagation
+            total_loss = actor_loss + alpha_loss
+            # Update actor and alpha
+            self.actor_optimizer.zero_grad()
+            self.alpha_optimizer.zero_grad()
+            total_loss.backward()
+            self.actor_optimizer.step()
+            self.alpha_optimizer.step()
+        
+        # Soft update the target critic
+        for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
+            target_param.data.copy_(self.config.TAU * param.data + (1.0 - self.config.TAU) * target_param.data)
+            
         # Update counter
         self.update_step += 1
+
+        return critic_loss.item(), actor_loss.item(), alpha_loss.item(), target_values.mean().item()
     
     def collect_experience(self, obs):
         # Generate random numbers for the environment
@@ -301,13 +325,109 @@ class Trainer:
         actions, log_probs = self.actor(obs, rand_nums)
         actions = actions.view(self.config.NUMBER_AGENTS, self.config.NUM_ENVS, self._action_dim)
 
-        obs, rewards, terminated, truncated, _ = self.env.step(actions)
+        next_obs, rewards, terminated, truncated, _ = self.env.step(actions)
 
-        obs = torch.stack(obs, dim=0)
+        next_obs = torch.stack(next_obs, dim=1).view(
+            self.config.NUMBER_AGENTS, self.config.NUM_ENVS, -1
+        ).transpose(1,0).to(self.device)
 
+        dones = torch.logical_or(terminated, truncated).float().to(self.device)
+
+        rand_nums = rand_nums.view(
+            self.config.NUMBER_AGENTS, self.config.NUM_ENVS, -1
+        ).transpose(1,0)
+
+        actions = actions.transpose(1,0)
+
+        # Store the experience in the buffer
+        for i in range(self.config.NUM_ENVS):
+            self.buffer.add(
+                obs[i],
+                actions[i],
+                rewards[0][i],
+                next_obs[i],
+                dones[i],
+                rand_nums[i]
+            )
+        
+        # Update the observation
+        obs = next_obs.transpose(1,0)
+
+        # Reset done environments
+        all_obs = None
+        for i in range(self.config.NUM_ENVS):
+            if dones[i]:
+                all_obs = self.env.reset_at(i)
+        if all_obs is not None:
+            obs = torch.stack(all_obs, dim=1).view(
+                self.config.NUMBER_AGENTS, self.config.NUM_ENVS, -1
+            ).transpose(1,0).to(self.device)
+
+        # Update the global step
+        self.global_step += self.config.NUM_ENVS
+
+        return obs, rewards, terminated, truncated
+    
+    def train(self):
+        if not self._setup_done:
+            self.logger.warning("Setup not done. Running setup before training.")
+            self.do_setup()
+        
+        if self.config.RESUME_FROM_CHECKPOINT:
+            self.logger.info("Resuming from checkpoint.")
+            self.load_from_checkpoint()
+
+        obs = self.env.reset()
+        obs = torch.stack(obs, dim=1).view(
+            self.config.NUMBER_AGENTS, self.config.NUM_ENVS, -1
+        ).transpose(1,0).to(self.device)
+
+        # Setup tqdm for progress bar
+        pbar = tqdm.tqdm(total=self.config.NUM_TIMESTEPS, desc="Training", unit="step")
+        pbar.update(self.global_step)
+
+        # Main training loop
+        while self.global_step < self.config.NUM_TIMESTEPS:
+            obs, rewards, terminated, truncated = self.collect_experience(obs)
+            # Log the rewards
+            self.writer.add_scalar("Reward", rewards.mean().item(), self.global_step)
+            # Log the success rate (# env terminated / # envs terminated + # envs truncated)
+            dones = torch.logical_or(terminated, truncated).float()
+            success_rate = terminated.sum() / ((terminated + truncated).sum() + 1e-6)
+            self.writer.add_scalar("Success Rate", success_rate.item(), self.global_step)
+
+            if self.update_step >= self.config.UPDATE_START and self.update_step % self.config.UPDATE_EVERY == 0:
+                critic_loss, actor_loss, alpha_loss, target_value = self.batch_update()
+                # Log the losses
+                self.writer.add_scalar("Loss/Critic", critic_loss, self.global_step)
+                if actor_loss is not None:
+                    self.writer.add_scalar("Loss/Actor", actor_loss, self.global_step)
+                if alpha_loss is not None:
+                    self.writer.add_scalar("Loss/Alpha", alpha_loss, self.global_step)
+                # Log the target value
+                self.writer.add_scalar("Target Value", target_value, self.global_step)
+            
+            # Save the model checkpoint
+            if self.update_step % self.config.CHECKPOINT_INTERVAL_UPDATE == 0:
+                self.save_checkpoint()
+                self.logger.info("Checkpoint saved at step %d", self.global_step)
+            
+            # Update the progress bar
+            pbar.update(self.config.NUM_ENVS)
 
 if __name__ == "__main__":
-    
+    import config
     # Set the random seed for reproducibility
     utils.set_seed(config.SEED)
 
+    # Create the trainer
+    trainer = Trainer(config)
+    trainer.do_setup()
+    # Start training
+    trainer.train()
+    # Close the environment
+    trainer.env.close()
+    # Close the TensorBoard writer
+    trainer.writer.close()
+    # Close the logger
+    logging.shutdown()
