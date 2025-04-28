@@ -303,6 +303,17 @@ class Trainer:
             total_loss.backward()
             self.actor_optimizer.step()
             self.alpha_optimizer.step()
+
+            # Clip alpha value
+            self.alpha.clamp_(self.config.ALPHA_MIN, self.config.ALPHA_MAX)
+
+            actor_loss = actor_loss.item()
+            alpha_loss = alpha_loss.item()
+        else:
+            actor_loss = None
+            alpha_loss = None
+        
+        critic_loss = critic_loss.item()
         
         # Soft update the target critic
         for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
@@ -311,7 +322,7 @@ class Trainer:
         # Update counter
         self.update_step += 1
 
-        return critic_loss.item(), actor_loss.item(), alpha_loss.item(), target_values.mean().item()
+        return critic_loss, actor_loss, alpha_loss, target_values.mean().item()
     
     def collect_experience(self, obs):
         # Generate random numbers for the environment
@@ -396,13 +407,13 @@ class Trainer:
                 obs, rewards, terminated, truncated = self.collect_experience(obs)
                 # Log the rewards
                 rewards = torch.stack(rewards, dim=1)
-                self.writer.add_scalar("Reward", rewards.mean().item(), self.global_step)
+                self.writer.add_scalar("Values/Reward", rewards.mean().item(), self.global_step)
                 # Log the success rate (# env terminated / # envs terminated + # envs truncated)
                 dones = torch.logical_or(terminated, truncated).float()
                 success_rate = terminated.sum() / ((terminated + truncated).sum() + 1e-6)
-                self.writer.add_scalar("Success Rate", success_rate.item(), self.global_step)
+                self.writer.add_scalar("Values/Success Rate", success_rate.item(), self.global_step)
 
-            if self.update_step >= self.config.UPDATE_START and self.update_step % self.config.UPDATE_EVERY == 0:
+            if self.global_step >= self.config.UPDATE_START and self.global_step % self.config.UPDATE_EVERY == 0:
                 # Set the actor and critic to training mode
                 self.actor.train()
                 self.critic.train()
@@ -416,9 +427,9 @@ class Trainer:
                     if alpha_loss is not None:
                         self.writer.add_scalar("Loss/Alpha", alpha_loss, self.global_step)
                     # Log the target value
-                    self.writer.add_scalar("Target Value", target_value, self.global_step)
+                    self.writer.add_scalar("Values/Target Value", target_value, self.global_step)
                     # Log the alpha value
-                    self.writer.add_scalar("alpha", self.alpha.item(), self.global_step)
+                    self.writer.add_scalar("Values/alpha", self.alpha.item(), self.global_step)
             
                     # Save the model checkpoint
                     if self.update_step % self.config.CHECKPOINT_INTERVAL_UPDATE == 0:
