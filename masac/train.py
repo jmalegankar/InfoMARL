@@ -378,7 +378,7 @@ class Trainer:
         # Update the global step
         self.global_step += self.config.NUM_ENVS
 
-        return obs, rewards, terminated, truncated, logprobs.mean().item()
+        return obs, rewards, terminated, truncated, log_probs.mean().item()
     
     def train(self):
         self.do_setup()
