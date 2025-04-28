@@ -25,17 +25,33 @@ class ReplayBuffer:
         self.ptr = (self.ptr + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
-    def sample(self, batch_size):
+    def sample(self, batch_size, device=None):
+        if self.size == 0:
+            raise ValueError("Replay buffer is empty. Cannot sample from an empty buffer.")
+        if batch_size > self.size:
+            raise ValueError(f"Batch size {batch_size} exceeds buffer size {self.size}.")
+
         idxs = torch.randint(0, self.size, size=(batch_size,), device=self.device)
-        
-        return (
-            self.obs_buf[idxs],
-            self.actions_buf[idxs],
-            self.rewards_buf[idxs],
-            self.next_obs_buf[idxs],
-            self.dones_buf[idxs],
-            self.random_numbers_buf[idxs]
-        )
+
+        if device is None or device == self.device:
+            return (
+                self.obs_buf[idxs].to(device),
+                self.actions_buf[idxs].to(device),
+                self.rewards_buf[idxs].to(device),
+                self.next_obs_buf[idxs].to(device),
+                self.dones_buf[idxs].to(device),
+                self.random_numbers_buf[idxs].to(device),
+            )
+        else:
+            # If device is different, we need to move the tensors to the new device
+            return (
+                self.obs_buf[idxs].to(device),
+                self.actions_buf[idxs].to(device),
+                self.rewards_buf[idxs].to(device),
+                self.next_obs_buf[idxs].to(device),
+                self.dones_buf[idxs].to(device),
+                self.random_numbers_buf[idxs].to(device),
+            )
         
     def get_save_state(self):
         if self.size == 0:

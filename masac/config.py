@@ -60,12 +60,14 @@ ALPHA_OPTIMIZER_PARAMS = {}
 #########################################################################
 # Logging configuration
 
-CHECKPOINT_DIR = "checkpoints"
+CHECKPOINT_DIR = f"checkpoints/{ENV_NAME}/"
 
 CHECKPOINT_INTERVAL_UPDATE = 1000
 
+MAX_CHECKPOINTS = 2
+
 SAVE_GIF_INTERVAL = 10000
 
-LOG_DIR = "logs"
+LOG_DIR = f"logs/{ENV_NAME}/"
 
 BASIC_CONFIG = {}
