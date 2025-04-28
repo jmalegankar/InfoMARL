@@ -378,7 +378,7 @@ class Trainer:
         # Update the global step
         self.global_step += self.config.NUM_ENVS
 
-        return obs, rewards, terminated, truncated
+        return obs, rewards, terminated, truncated, logprobs.mean().item()
     
     def train(self):
         self.do_setup()
@@ -404,10 +404,12 @@ class Trainer:
         while self.global_step < self.config.NUM_TIMESTEPS:
             with torch.no_grad():
                 # Collect experience
-                obs, rewards, terminated, truncated = self.collect_experience(obs)
+                obs, rewards, terminated, truncated, logprobs = self.collect_experience(obs)
                 # Log the rewards
                 rewards = torch.stack(rewards, dim=1)
                 self.writer.add_scalar("Values/Reward", rewards.mean().item(), self.global_step)
+                # Log logporbs
+                self.writer.add_scalar("Values/LogProb", logprobs, self.global_step)
                 # Log the success rate (# env terminated / # envs terminated + # envs truncated)
                 dones = torch.logical_or(terminated, truncated).float()
                 success_rate = terminated.sum() / ((terminated + truncated).sum() + 1e-6)
