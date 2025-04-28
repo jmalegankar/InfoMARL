@@ -305,7 +305,8 @@ class Trainer:
             self.alpha_optimizer.step()
 
             # Clip alpha value
-            self.alpha.clamp_(self.config.ALPHA_MIN, self.config.ALPHA_MAX)
+            with torch.no_grad():
+                self.alpha.clamp_(self.config.ALPHA_MIN, self.config.ALPHA_MAX)
 
             actor_loss = actor_loss.item()
             alpha_loss = alpha_loss.item()
