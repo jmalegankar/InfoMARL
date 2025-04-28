@@ -14,7 +14,7 @@ import logging
 import tqdm
 
 
-def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs):
+def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs, device):
     """
     Permute the random numbers for each agent in the environment.
     """
@@ -81,26 +81,16 @@ class Trainer:
         
         self.logger.info("Buffer device: %s", self.buffer_device)
         
-        # Set up Buffer
-
-        self.buffer = ReplayBuffer(
-            self.config.BUFFER_SIZE,
-            self.config.NUMBER_AGENTS,
-            self.env.observation_space.shape[0],
-            self.env.action_space.shape[0],
-            self.buffer_device
-        )
-
         # Set up environment
 
         self.env = vmas.make_env(
-            scenario_name=self.config.ENV_NAME,
-            num_agents=self.config.NUMBER_AGENTS,
+            scenario=self.config.ENV_NAME,
+            n_agents=self.config.NUMBER_AGENTS,
             num_envs=self.config.NUM_ENVS,
-            continuous_action=self.config.ENV_CONTINUOUS_ACTION,
-            max_episode_length=self.config.MAX_EPISODE_LENGTH,
+            continuous_actions=self.config.ENV_CONTINUOUS_ACTION,
+            max_steps=self.config.MAX_EPISODE_LENGTH,
             seed=self.config.SEED,
-            device=self.buffer_device,
+            device=self.device,
             terminated_truncated=True,
         )
         self.logger.info("""
@@ -113,8 +103,18 @@ class Trainer:
             Seed: %d
         """, self.config.ENV_NAME, self.config.NUMBER_AGENTS, self.config.NUM_ENVS, self.config.ENV_CONTINUOUS_ACTION, self.config.MAX_EPISODE_LENGTH, self.config.SEED)
 
-        self._obs_dim = self.env.observation_space.shape[0]
-        self._action_dim = self.env.action_space.shape[0]
+        self._obs_dim = self.env.observation_space[0].shape[0]
+        self._action_dim = self.env.action_space[0].shape[0]
+
+        # Set up Buffer
+
+        self.buffer = ReplayBuffer(
+            self.config.BUFFER_SIZE,
+            self._obs_dim,
+            self._action_dim,
+            self.config.NUMBER_AGENTS,
+            self.buffer_device
+        )
 
         # Set up actor and critic
         self.actor_cls = getattr(actor, self.config.ACTOR_MODULE)
@@ -195,6 +195,7 @@ class Trainer:
             self.buffer,
             self.global_step,
             self.update_step,
+            self.config.SEED
         )
 
     
@@ -317,7 +318,7 @@ class Trainer:
         rand_nums = torch.rand(
             self.config.NUM_ENVS, self.config.NUMBER_AGENTS, device=self.device
         )
-        rand_nums = get_permuted_env_random_numbers(rand_nums, self.config.NUMBER_AGENTS, self.config.NUM_ENVS)
+        rand_nums = get_permuted_env_random_numbers(rand_nums, self.config.NUMBER_AGENTS, self.config.NUM_ENVS, self.device)
         rand_nums = rand_nums.view(-1, self.config.NUMBER_AGENTS)
 
         obs = obs.view(-1, self._obs_dim)
@@ -361,7 +362,7 @@ class Trainer:
         if all_obs is not None:
             obs = torch.stack(all_obs, dim=1).view(
                 self.config.NUMBER_AGENTS, self.config.NUM_ENVS, -1
-            ).transpose(1,0).to(self.device)
+            ).transpose(1,0).to(self.device).contiguous()
 
         # Update the global step
         self.global_step += self.config.NUM_ENVS
@@ -369,9 +370,7 @@ class Trainer:
         return obs, rewards, terminated, truncated
     
     def train(self):
-        if not self._setup_done:
-            self.logger.warning("Setup not done. Running setup before training.")
-            self.do_setup()
+        self.do_setup()
         
         if self.config.RESUME_FROM_CHECKPOINT:
             self.logger.info("Resuming from checkpoint.")
@@ -380,37 +379,55 @@ class Trainer:
         obs = self.env.reset()
         obs = torch.stack(obs, dim=1).view(
             self.config.NUMBER_AGENTS, self.config.NUM_ENVS, -1
-        ).transpose(1,0).to(self.device)
+        ).transpose(1,0).to(self.device).contiguous()
 
         # Setup tqdm for progress bar
         pbar = tqdm.tqdm(total=self.config.NUM_TIMESTEPS, desc="Training", unit="step")
         pbar.update(self.global_step)
 
+        # Set everything to eval mode
+        self.actor.eval()
+        self.critic.eval()
+
         # Main training loop
         while self.global_step < self.config.NUM_TIMESTEPS:
-            obs, rewards, terminated, truncated = self.collect_experience(obs)
-            # Log the rewards
-            self.writer.add_scalar("Reward", rewards.mean().item(), self.global_step)
-            # Log the success rate (# env terminated / # envs terminated + # envs truncated)
-            dones = torch.logical_or(terminated, truncated).float()
-            success_rate = terminated.sum() / ((terminated + truncated).sum() + 1e-6)
-            self.writer.add_scalar("Success Rate", success_rate.item(), self.global_step)
+            with torch.no_grad():
+                # Collect experience
+                obs, rewards, terminated, truncated = self.collect_experience(obs)
+                # Log the rewards
+                rewards = torch.stack(rewards, dim=1)
+                self.writer.add_scalar("Reward", rewards.mean().item(), self.global_step)
+                # Log the success rate (# env terminated / # envs terminated + # envs truncated)
+                dones = torch.logical_or(terminated, truncated).float()
+                success_rate = terminated.sum() / ((terminated + truncated).sum() + 1e-6)
+                self.writer.add_scalar("Success Rate", success_rate.item(), self.global_step)
 
             if self.update_step >= self.config.UPDATE_START and self.update_step % self.config.UPDATE_EVERY == 0:
-                critic_loss, actor_loss, alpha_loss, target_value = self.batch_update()
-                # Log the losses
-                self.writer.add_scalar("Loss/Critic", critic_loss, self.global_step)
-                if actor_loss is not None:
-                    self.writer.add_scalar("Loss/Actor", actor_loss, self.global_step)
-                if alpha_loss is not None:
-                    self.writer.add_scalar("Loss/Alpha", alpha_loss, self.global_step)
-                # Log the target value
-                self.writer.add_scalar("Target Value", target_value, self.global_step)
+                # Set the actor and critic to training mode
+                self.actor.train()
+                self.critic.train()
+                # Update the actor and critic
+                for _ in range(self.config.UPDATE_TIMES):
+                    critic_loss, actor_loss, alpha_loss, target_value = self.batch_update()
+                    # Log the losses
+                    self.writer.add_scalar("Loss/Critic", critic_loss, self.global_step)
+                    if actor_loss is not None:
+                        self.writer.add_scalar("Loss/Actor", actor_loss, self.global_step)
+                    if alpha_loss is not None:
+                        self.writer.add_scalar("Loss/Alpha", alpha_loss, self.global_step)
+                    # Log the target value
+                    self.writer.add_scalar("Target Value", target_value, self.global_step)
+                    # Log the alpha value
+                    self.writer.add_scalar("alpha", self.alpha.item(), self.global_step)
             
-            # Save the model checkpoint
-            if self.update_step % self.config.CHECKPOINT_INTERVAL_UPDATE == 0:
-                self.save_checkpoint()
-                self.logger.info("Checkpoint saved at step %d", self.global_step)
+                    # Save the model checkpoint
+                    if self.update_step % self.config.CHECKPOINT_INTERVAL_UPDATE == 0:
+                        self.save_checkpoint()
+                        self.logger.info("Checkpoint saved at step %d", self.global_step)
+                    
+                    # Set the actor and critic to eval mode
+                    self.actor.eval()
+                    self.critic.eval()
             
             # Update the progress bar
             pbar.update(self.config.NUM_ENVS)
@@ -422,7 +439,6 @@ if __name__ == "__main__":
 
     # Create the trainer
     trainer = Trainer(config)
-    trainer.do_setup()
     # Start training
     trainer.train()
     # Close the environment

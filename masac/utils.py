@@ -14,7 +14,7 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 def save_checkpoint(checkpoint_dir, actor, critic, target_critic, actor_optimizer, critic_optimizer, 
-                   alpha, alpha_optimizer, replay_buffer, global_step, update_step):
+                   alpha, alpha_optimizer, replay_buffer, global_step, update_step, seed):
     """
     Save a checkpoint of the training state.
     """
