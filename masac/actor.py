@@ -54,27 +54,24 @@ class RandomAgentPolicy(nn.Module):
         )
         
         self.cross_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
-        self.processor = nn.Sequential(
-            nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(),
-        )
-        self.self_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
+        self.norm_1 = nn.LayerNorm(self.hidden_dim)
+        self.ff1 = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.landmark_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
+        self.norm_2 = nn.LayerNorm(self.hidden_dim)
+        self.ff2 = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.mean_processor = nn.Sequential(
-            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim * 2, 2)
+            nn.Linear(self.hidden_dim, 2)
         )
         self.std_processor = nn.Sequential(
-            nn.Linear(self.hidden_dim * 2, self.hidden_dim  * 2),
+            nn.Linear(self.hidden_dim, self.hidden_dim ),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim * 2, 2)
+            nn.Linear(self.hidden_dim, 2)
         )
     
     def get_mean_std(self, obs, random_numbers):
@@ -99,17 +96,24 @@ class RandomAgentPolicy(nn.Module):
 
         agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1,1))
         attention_output, _ = self.cross_attention(
-            query=all_agents_embeddings,
-            key=landmark_embeddings,
-            value=landmark_value,
-            attn_mask = agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1).transpose(-1, -2),
+            query=landmark_embeddings,
+            key=all_agents_embeddings,
+            value=all_agents_embeddings,
+            attn_mask = agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1),
             need_weights=False
         )
 
-        attention_output = self.processor(attention_output)
-        attention_output = self.self_attention(attention_output, attention_output, attention_output, need_weights=False)[0].mean(dim=-2)
+        attention_output = self.norm_1(attention_output + self.ff1(attention_output))
+        attention_output = self.landmark_attention(attention_output, landmark_value, landmark_value, need_weights=False)[0]
+        attention_output = self.norm_2(attention_output + self.ff2(attention_output))
 
-        latent = torch.concat((attention_output, cur_agent_embeddings), dim=-1)
+        # Take landmark value with maximum cosine similarity for cur_agent_embeddings and attention_output
+        attention_output = attention_output / torch.norm(attention_output, dim=-1, keepdim=True)
+        cur_agent_embeddings = cur_agent_embeddings / torch.norm(cur_agent_embeddings, dim=-1, keepdim=True)
+        cosine_similarity = torch.bmm(attention_output, cur_agent_embeddings.unsqueeze(-1)).squeeze(-1)
+        max_indices = torch.argmax(cosine_similarity, dim=-1)
+        latent = attention_output[torch.arange(batch_size, device=max_indices.device), max_indices, :]
+
         mean = self.mean_processor(latent)
         log_std = self.std_processor(latent)
         return mean, log_std
