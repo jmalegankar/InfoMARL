@@ -264,18 +264,21 @@ class Trainer:
         critic_loss = F.mse_loss(q1.view(-1), target_values) + F.mse_loss(q2.view(-1), target_values)
         return critic_loss
     
-    def compute_actor_alpha_loss(self, obs, rand_nums):
+    def compute_actor_loss(self, obs, rand_nums):
         actions, log_probs = self.calculate_actor_pass(obs, rand_nums)
         # Compute the Q-values for the actions taken
         q1, q2 = self.critic(obs, actions)
         min_q = torch.min(q1, q2).view(-1, 1)
         # Compute the actor loss
         actor_loss = (self.alpha * log_probs - min_q).sum(dim=-1).mean()
-        # Detach log_probs to avoid gradient flow
-        log_probs = log_probs.clone().detach()
+        return actor_loss
+    
+    def compute_alpha_loss(self, obs):
+        with torch.no_grad():
+            actions, log_probs = self.calculate_actor_pass(obs)
         # Compute the alpha loss
-        alpha_loss = -(self.alpha.log() * (log_probs + self.config.TARGET_ENTROPY)).mean()
-        return actor_loss, alpha_loss
+        alpha_loss = -(self.alpha * (log_probs + self.config.TARGET_ENTROPY)).mean()
+        return alpha_loss
 
         
     def batch_update(self):        
@@ -293,15 +296,18 @@ class Trainer:
         self.critic_optimizer.step()
         # Compute actor and alpha loss if updating actor and alpha
         if self.update_step % self.config.UPDATE_ACTOR_EVERY_CRITIC == 0:
-            # Calculate actor loss and alpha loss
-            actor_loss, alpha_loss = self.compute_actor_alpha_loss(obs, rand_nums)
-            # Sum up the loss for common backpropagation
-            total_loss = actor_loss + alpha_loss
-            # Update actor and alpha
+            # Calculate actor loss
+            actor_loss = self.compute_actor_alpha_loss(obs, rand_nums)
+            # Update actor
             self.actor_optimizer.zero_grad()
-            self.alpha_optimizer.zero_grad()
-            total_loss.backward()
+            actor_loss.backward()
             self.actor_optimizer.step()
+
+            # Calculate alpha loss
+            alpha_loss = self.compute_alpha_loss(obs)
+            # Update alpha
+            self.alpha_optimizer.zero_grad()
+            alpha_loss.backward()
             self.alpha_optimizer.step()
 
             # Clip alpha value
