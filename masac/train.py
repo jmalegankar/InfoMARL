@@ -297,7 +297,7 @@ class Trainer:
         # Compute actor and alpha loss if updating actor and alpha
         if self.update_step % self.config.UPDATE_ACTOR_EVERY_CRITIC == 0:
             # Calculate actor loss
-            actor_loss = self.compute_actor_alpha_loss(obs, rand_nums)
+            actor_loss = self.compute_actor_loss(obs, rand_nums)
             # Update actor
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
