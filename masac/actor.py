@@ -86,23 +86,23 @@ class RandomAgentPolicy(nn.Module):
  
         cur_agent_embeddings = self.cur_agent_embedding(cur_agent)
         landmark_embeddings = self.landmark_embedding(
-            landmarks.reshape(-1, 2)
-        ).reshape(-1, self.number_agents, self.hidden_dim)
+            landmarks.view(-1, 2)
+        ).view(-1, self.number_agents, self.hidden_dim)
 
         landmark_value = self.landmark_value(
-            landmarks.reshape(-1, 2)
-        ).reshape(-1, self.number_agents, self.hidden_dim)
+            landmarks.view(-1, 2)
+        ).view(-1, self.number_agents, self.hidden_dim)
 
         all_agents_embeddings = self.all_agent_embedding(
-            all_agents_list.reshape(-1, 2)  
-        ).reshape(-1, self.number_agents, self.hidden_dim)
+            all_agents_list.view(-1, 2)  
+        ).view(-1, self.number_agents, self.hidden_dim)
 
         agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1,1))
         attention_output, _ = self.cross_attention(
             query=all_agents_embeddings,
             key=landmark_embeddings,
             value=landmark_value,
-            attn_mask = agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1),
+            attn_mask = agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1).transpose(-1, -2),
             need_weights=False
         )
 
