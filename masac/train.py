@@ -270,11 +270,11 @@ class Trainer:
         q1, q2 = self.critic(obs, actions)
         min_q = torch.min(q1, q2).view(-1, 1)
         # Compute the actor loss
-        actor_loss = (self.alpha *log_probs - min_q).sum(dim=-1).mean()
+        actor_loss = (self.alpha * log_probs - min_q).sum(dim=-1).mean()
         # Detach log_probs to avoid gradient flow
-        log_probs = log_probs.detach()
+        log_probs = log_probs.clone().detach()
         # Compute the alpha loss
-        alpha_loss = -(self.alpha.log() * (log_probs - self.config.TARGET_ENTROPY)).mean()
+        alpha_loss = -(self.alpha.log() * (log_probs + self.config.TARGET_ENTROPY)).mean()
         return actor_loss, alpha_loss
 
         
