@@ -54,11 +54,7 @@ class RandomAgentPolicy(nn.Module):
         )
         
         self.cross_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
-        self.norm_1 = nn.LayerNorm(self.hidden_dim)
-        self.ff1 = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.landmark_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
-        self.norm_2 = nn.LayerNorm(self.hidden_dim)
-        self.ff2 = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.mean_processor = nn.Sequential(
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
@@ -103,9 +99,7 @@ class RandomAgentPolicy(nn.Module):
             need_weights=False
         )
 
-        attention_output = self.norm_1(attention_output + self.ff1(attention_output))
-        attention_output = self.landmark_attention(attention_output, landmark_value, landmark_value, need_weights=False)[0]
-        attention_output = self.norm_2(attention_output + self.ff2(attention_output))
+        attention_output = self.landmark_attention(attention_output, landmark_embeddings, landmark_value, need_weights=False)[0]
 
         # Take landmark value with maximum cosine similarity for cur_agent_embeddings and attention_output
         attention_output = attention_output / torch.norm(attention_output, dim=-1, keepdim=True)
