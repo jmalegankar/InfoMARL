@@ -419,7 +419,7 @@ class Trainer:
                 self.writer.add_scalar("Values/LogProb", logprobs, self.global_step)
                 # Log the success rate (# env terminated / # envs terminated + # envs truncated)
                 dones = torch.logical_or(terminated, truncated).float()
-                success_rate = terminated.sum() / ((terminated + truncated).sum() + 1e-6)
+                success_rate = terminated.sum() / (dones.sum() + 1e-6)
                 self.writer.add_scalar("Values/Success Rate", success_rate.item(), self.global_step)
 
             if self.global_step >= self.config.UPDATE_START and self.global_step % self.config.UPDATE_EVERY == 0:
@@ -461,8 +461,6 @@ if __name__ == "__main__":
     trainer = Trainer(config)
     # Start training
     trainer.train()
-    # Close the environment
-    trainer.env.close()
     # Close the TensorBoard writer
     trainer.writer.close()
     # Close the logger
