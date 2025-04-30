@@ -87,7 +87,7 @@ if __name__ == "__main__":
                         help="Directory containing checkpoints")
     parser.add_argument("--agent_numbers", type=int, nargs="+", default=[1,3,4,5,7],
                         help="List of agent numbers to evaluate")
-    parser.add_argument("--episodes_per_config", type=int, default=1, 
+    parser.add_argument("--episodes_per_config", type=int, default=1, # make this 5 for more episodes
                         help="Number of episodes to record per configuration")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--device", type=str, default=None, 
@@ -141,25 +141,7 @@ if __name__ == "__main__":
             hidden_dim=args.hidden_dim
         ).to(device)
 
-        if num_agents != 4:
-            print(f"Note: Original model was trained with 4 agents, adapting to {num_agents} agents.")
-            try:
-                actor_model.load_state_dict(checkpoint['actor_state_dict'], strict=False)
-            except:
-                print("Strict loading failed. This is expected when changing the number of agents.")
-                # Only load layers that are compatible
-                pretrained_dict = checkpoint['actor_state_dict']
-                model_dict = actor_model.state_dict()
-                
-                # Filter out incompatible layers
-                pretrained_dict = {k: v for k, v in pretrained_dict.items() 
-                                  if k in model_dict and v.shape == model_dict[k].shape}
-                
-                # Update the model with compatible layers
-                model_dict.update(pretrained_dict)
-                actor_model.load_state_dict(model_dict)
-        else:
-            actor_model.load_state_dict(checkpoint['actor_state_dict'])
+        actor_model.load_state_dict(checkpoint['actor_state_dict'])
         
         actor_model.eval()
 
