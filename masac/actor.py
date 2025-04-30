@@ -14,7 +14,13 @@ def parser(obs:torch.Tensor, number_agents:int=3):
     #other agents pos
     other_agents = obs[:, 4 + 2 * number_agents:]
     #print("other_agents", other_agents, other_agents.shape)
-    return cur_pos, cur_vel, landmarks.contiguous().reshape(-1, number_agents, 2), other_agents.contiguous().reshape(-1, (number_agents - 1), 2)
+    if number_agents == 1:
+        landmarks = landmarks.unsqueeze(-2)
+        other_agents = other_agents.unsqueeze(-2)
+        num_envs = cur_pos.shape[0]
+        return cur_pos.view(num_envs, 2), cur_vel.view(num_envs, 2), landmarks.contiguous(), other_agents.contiguous().view(num_envs, 0, 2)
+    else:
+        return cur_pos, cur_vel, landmarks.contiguous().reshape(-1, number_agents, 2), other_agents.contiguous().reshape(-1, (number_agents - 1), 2)
 
 class RandomAgentPolicy(nn.Module):
     def __init__(self, number_agents, agent_dim, landmark_dim, hidden_dim):
@@ -113,7 +119,6 @@ class RandomAgentPolicy(nn.Module):
         return mean, log_std
 
     def forward(self, obs, random_numbers):
-
         mean, log_std = self.get_mean_std(obs, random_numbers)
 
         log_std = torch.clamp(log_std, min=-5, max=1)
