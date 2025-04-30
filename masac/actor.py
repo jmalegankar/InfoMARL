@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-def parser(obs:torch.Tensor, number_agents:int=3):
+def env_parser(obs:torch.Tensor, number_agents:int=3):
     #cur agents pos
     cur_pos = obs[: ,0:2]
     #print("cur_pos", cur_pos, cur_pos.shape)
@@ -77,7 +77,7 @@ class RandomAgentPolicy(nn.Module):
         )
     
     def get_mean_std(self, obs, random_numbers):
-        cur_pos, cur_vel, landmarks, other_agents = parser(obs, self.number_agents)
+        cur_pos, cur_vel, landmarks, other_agents = env_parser(obs, self.number_agents)
         batch_size = cur_pos.shape[0]
         cur_agent = torch.cat((cur_pos, cur_vel), dim=-1)
         all_agents_list = torch.cat((cur_pos.unsqueeze(1), other_agents), dim=1)

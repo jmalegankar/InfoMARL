@@ -8,3 +8,4 @@ new_arch/runs/
 pod-jmalegaonkar-testpod.yaml
 checkpoints/
 data/
+evaluation_gifs/
