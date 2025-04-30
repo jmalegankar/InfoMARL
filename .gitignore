@@ -6,3 +6,5 @@ models/
 runs/
 new_arch/runs/
 pod-jmalegaonkar-testpod.yaml
+checkpoints/
+data/
