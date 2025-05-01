@@ -38,7 +38,7 @@ def save_checkpoint(checkpoint_dir, actor, critic, target_critic, actor_optimize
     print(f"Checkpoint saved to {checkpoint_filename}")    
 
 def load_checkpoint(checkpoint, seed, actor, critic, target_critic, actor_optimizer,
-                    critic_optimizer, alpha, alpha_optimizer, replay_buffer, device):
+                    critic_optimizer, alpha, alpha_optimizer, replay_buffer):
     """
     Load a checkpoint and restore the training state.
     """
@@ -53,8 +53,9 @@ def load_checkpoint(checkpoint, seed, actor, critic, target_critic, actor_optimi
     actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state_dict'])
     critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state_dict'])
     alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer_state_dict'])
-    alpha.copy_(checkpoint['alpha'])
-    replay_buffer.load_state(checkpoint['replay_buffer'])
+    with torch.no_grad():
+        alpha.copy_(checkpoint['alpha'])
+    replay_buffer.load_save_state(checkpoint['replay_buffer'])
     global_step = checkpoint['global_step']
     update_step = checkpoint['update_step']
 

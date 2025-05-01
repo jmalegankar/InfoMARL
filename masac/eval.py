@@ -145,6 +145,8 @@ if __name__ == "__main__":
         
         actor_model.eval()
 
+        del checkpoint
+
         frames_list = evaluate_and_record(
             actor_model=actor_model,
             env=env,

@@ -218,7 +218,7 @@ class Trainer:
         self.logger.info("Loading checkpoint from %s on device %s", checkpoint_path, self.device)
 
         # Load the checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
 
         self.global_step, self.update_step = utils.load_checkpoint(
@@ -232,7 +232,6 @@ class Trainer:
             self.alpha,
             self.alpha_optimizer,
             self.buffer,
-            self.device
         )
         del checkpoint
         self.logger.info("Checkpoint loaded successfully.")
@@ -242,7 +241,7 @@ class Trainer:
         obs = obs.view(-1, self._obs_dim)
         # When sampling next actions, also need to sample random numbers
         if rand_nums is None:
-            rand_nums = torch.rand(
+            rand_nums = torch.zeros(
                 obs.shape[0], self.config.NUMBER_AGENTS, device=self.device
             )
         actions, log_probs = self.actor(obs, rand_nums)
@@ -268,14 +267,14 @@ class Trainer:
         actions, log_probs = self.calculate_actor_pass(obs, rand_nums)
         # Compute the Q-values for the actions taken
         q1, q2 = self.critic(obs, actions)
-        min_q = torch.min(q1, q2).view(-1, 1)
+        min_q = torch.min(q1, q2).view(-1)
         # Compute the actor loss
-        actor_loss = (self.alpha * log_probs - min_q).sum(dim=-1).mean()
+        actor_loss = (self.alpha * log_probs.sum(dim=-1) - min_q).mean()
         return actor_loss
     
     def compute_alpha_loss(self, obs):
         with torch.no_grad():
-            actions, log_probs = self.calculate_actor_pass(obs)
+            _, log_probs = self.calculate_actor_pass(obs)
         # Compute the alpha loss
         alpha_loss = -(self.alpha * (log_probs + self.config.TARGET_ENTROPY)).mean()
         return alpha_loss
@@ -293,6 +292,10 @@ class Trainer:
         # Update critic
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
+        # Gradient norm logging
+        grad_norm = sum(p.grad.data.norm(2).item() for p in self.critic.parameters() if p.grad is not None) ** 0.5
+        self.writer.add_scalar("Gradient/Critic", grad_norm, self.update_step)
+        # Update critic
         self.critic_optimizer.step()
         # Compute actor and alpha loss if updating actor and alpha
         if self.update_step % self.config.UPDATE_ACTOR_EVERY_CRITIC == 0:
@@ -301,6 +304,10 @@ class Trainer:
             # Update actor
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
+            # Gradient norm logging
+            grad_norm = sum(p.grad.data.norm(2).item() for p in self.actor.parameters() if p.grad is not None) ** 0.5
+            self.writer.add_scalar("Gradient/Actor", grad_norm, self.update_step)
+            # Update actor
             self.actor_optimizer.step()
 
             # Calculate alpha loss
@@ -346,6 +353,8 @@ class Trainer:
 
         next_obs, rewards, terminated, truncated, _ = self.env.step(actions)
 
+        rewards = sum(rewards)
+
         next_obs = torch.stack(next_obs, dim=1).view(
             self.config.NUMBER_AGENTS, self.config.NUM_ENVS, -1
         ).transpose(1,0).to(self.device)
@@ -363,7 +372,7 @@ class Trainer:
             self.buffer.add(
                 obs[i],
                 actions[i],
-                rewards[0][i],
+                rewards[i] * self.config.REWARD_SCALE,
                 next_obs[i],
                 dones[i],
                 rand_nums[i]
@@ -413,7 +422,6 @@ class Trainer:
                 # Collect experience
                 obs, rewards, terminated, truncated, logprobs = self.collect_experience(obs)
                 # Log the rewards
-                rewards = torch.stack(rewards, dim=1)
                 self.writer.add_scalar("Values/Reward", rewards.mean().item(), self.global_step)
                 # Log logporbs
                 self.writer.add_scalar("Values/LogProb", logprobs, self.global_step)

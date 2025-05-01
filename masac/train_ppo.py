@@ -241,7 +241,7 @@ class Trainer:
         obs = obs.view(-1, self._obs_dim)
         # When sampling next actions, also need to sample random numbers
         if rand_nums is None:
-            rand_nums = torch.zeros(
+            rand_nums = torch.rand(
                 obs.shape[0], self.config.NUMBER_AGENTS, device=self.device
             )
         actions, log_probs = self.actor(obs, rand_nums)
@@ -268,7 +268,7 @@ class Trainer:
         q1, q2 = self.critic(obs, actions)
         min_q = torch.min(q1, q2).view(-1)
         # Compute the actor loss
-        actor_loss = (-min_q * log_probs.sum(dim=-1)).mean()
+        actor_loss = - min_q.mean()
         return actor_loss
         
     def batch_update(self):        
@@ -423,8 +423,6 @@ class Trainer:
                         self.writer.add_scalar("Loss/Alpha", alpha_loss, self.global_step)
                     # Log the target value
                     self.writer.add_scalar("Values/Target Value", target_value, self.global_step)
-                    # Log the alpha value
-                    self.writer.add_scalar("Values/alpha", self.alpha.item(), self.global_step)
             
                     # Save the model checkpoint
                     if self.update_step % self.config.CHECKPOINT_INTERVAL_UPDATE == 0:
