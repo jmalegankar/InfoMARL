@@ -32,47 +32,54 @@ class RandomAgentPolicy(nn.Module):
 
         self.cur_agent_embedding = nn.Sequential(
             nn.Linear(self.agent_dim * 2, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
         
         self.landmark_embedding = nn.Sequential(
             nn.Linear(landmark_dim, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
         )
 
         self.landmark_value = nn.Sequential(
             nn.Linear(landmark_dim, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
         )
         
         self.all_agent_embedding = nn.Sequential(
             nn.Linear(self.agent_dim, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
         )
         
         self.cross_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
+
+        self.processor = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+        )
+
         self.landmark_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
         self.mean_processor = nn.Sequential(
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+            nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(self.hidden_dim, 2)
         )
         self.std_processor = nn.Sequential(
-            nn.Linear(self.hidden_dim, self.hidden_dim ),
-            nn.ReLU(),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+            nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(self.hidden_dim, 2)
         )
     
@@ -105,14 +112,13 @@ class RandomAgentPolicy(nn.Module):
             need_weights=False
         )
 
-        attention_output = self.landmark_attention(attention_output, landmark_embeddings, landmark_value, need_weights=False)[0]
+        attention_output = self.processor(attention_output)
 
-        # Take landmark value with maximum cosine similarity for cur_agent_embeddings and attention_output
-        attention_output = attention_output / torch.norm(attention_output, dim=-1, keepdim=True)
-        cur_agent_embeddings = cur_agent_embeddings / torch.norm(cur_agent_embeddings, dim=-1, keepdim=True)
-        cosine_similarity = torch.bmm(attention_output, cur_agent_embeddings.unsqueeze(-1)).squeeze(-1)
-        max_indices = torch.argmax(cosine_similarity, dim=-1)
-        latent = attention_output[torch.arange(batch_size, device=max_indices.device), max_indices, :]
+        attention_output = self.landmark_attention(
+            cur_agent_embeddings.unsqueeze(dim=-2), attention_output, landmark_value, need_weights=False
+        )[0].squeeze(dim=-2)
+
+        latent = torch.cat((cur_agent_embeddings, attention_output), dim=-1)
 
         mean = self.mean_processor(latent)
         log_std = self.std_processor(latent)
@@ -121,7 +127,8 @@ class RandomAgentPolicy(nn.Module):
     def forward(self, obs, random_numbers):
         mean, log_std = self.get_mean_std(obs, random_numbers)
 
-        log_std = torch.clamp(log_std, min=-5, max=1)
+        log_std = torch.tanh(log_std)
+        log_std = -3 + 3.5 * (log_std + 1)
         log_std = log_std.exp()
         
         normal = torch.distributions.Normal(mean, log_std)
@@ -130,6 +137,6 @@ class RandomAgentPolicy(nn.Module):
         
         action = torch.tanh(x_t)
         
-        log_prob = normal.log_prob(x_t) - torch.log((1 - action.pow(2)) + 1e-8)
-        
-        return action, log_prob.sum(dim=-1).clamp(max=0)
+        log_prob = normal.log_prob(x_t) - torch.log(1 - action.pow(2) + 1e-6)
+
+        return action, log_prob.sum(dim=-1)

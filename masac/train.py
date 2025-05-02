@@ -254,6 +254,8 @@ class Trainer:
             next_actions, next_log_probs = self.calculate_actor_pass(next_obs)
             target_q1, target_q2 = self.target_critic(next_obs, next_actions)
             target_v = torch.min(target_q1, target_q2).view(-1)
+            # Ensure logprobs is batched x number of agents
+            next_log_probs = next_log_probs.view(-1, self.config.NUMBER_AGENTS)
             target_v -= self.alpha * next_log_probs.sum(dim=-1)
             target_values = rewards + (1 - dones) * self.config.GAMMA * target_v
         return target_values
@@ -265,6 +267,8 @@ class Trainer:
     
     def compute_actor_loss(self, obs, rand_nums):
         actions, log_probs = self.calculate_actor_pass(obs, rand_nums)
+        # Ensure logprobs is batched x number of agents
+        log_probs = log_probs.view(-1, self.config.NUMBER_AGENTS)
         # Compute the Q-values for the actions taken
         q1, q2 = self.critic(obs, actions)
         min_q = torch.min(q1, q2).view(-1)
@@ -275,8 +279,10 @@ class Trainer:
     def compute_alpha_loss(self, obs):
         with torch.no_grad():
             _, log_probs = self.calculate_actor_pass(obs)
+        # Ensure logprobs is batched x number of agents
+        log_probs = log_probs.view(-1, self.config.NUMBER_AGENTS)
         # Compute the alpha loss
-        alpha_loss = -(self.alpha * (log_probs + self.config.TARGET_ENTROPY)).mean()
+        alpha_loss = -(self.alpha * (log_probs.sum(dim=-1) + self.config.TARGET_ENTROPY)).mean()
         return alpha_loss
 
         
@@ -298,7 +304,7 @@ class Trainer:
         # Update critic
         self.critic_optimizer.step()
         # Compute actor and alpha loss if updating actor and alpha
-        if self.update_step % self.config.UPDATE_ACTOR_EVERY_CRITIC == 0:
+        if self.update_step % self.config.UPDATE_ACTOR_EVERY_CRITIC == 0 and self.update_step >= self.config.ACTOR_UPDATE_START:
             # Calculate actor loss
             actor_loss = self.compute_actor_loss(obs, rand_nums)
             # Update actor
@@ -394,7 +400,7 @@ class Trainer:
         # Update the global step
         self.global_step += self.config.NUM_ENVS
 
-        return obs, rewards, terminated, truncated, log_probs.mean().item()
+        return obs, rewards, terminated, truncated, log_probs.sum(dim=-1).mean().item()
     
     def train(self):
         self.do_setup()
@@ -425,10 +431,6 @@ class Trainer:
                 self.writer.add_scalar("Values/Reward", rewards.mean().item(), self.global_step)
                 # Log logporbs
                 self.writer.add_scalar("Values/LogProb", logprobs, self.global_step)
-                # Log the success rate (# env terminated / # envs terminated + # envs truncated)
-                dones = torch.logical_or(terminated, truncated).float()
-                success_rate = terminated.sum() / (dones.sum() + 1e-6)
-                self.writer.add_scalar("Values/Success Rate", success_rate.item(), self.global_step)
 
             if self.global_step >= self.config.UPDATE_START and self.global_step % self.config.UPDATE_EVERY == 0:
                 # Set the actor and critic to training mode
@@ -469,6 +471,8 @@ if __name__ == "__main__":
     trainer = Trainer(config)
     # Start training
     trainer.train()
+    # Save the final checkpoint
+    trainer.save_checkpoint()
     # Close the TensorBoard writer
     trainer.writer.close()
     # Close the logger
