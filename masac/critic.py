@@ -48,4 +48,73 @@ class RAP_qvalue(nn.Module):
         q1 = self.q1(obs_action)
         q2 = self.q2(obs_action)
         return q1, q2
-    
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class AgentEncoder(nn.Module):
+    def __init__(self, obs_dim, action_dim, embed_dim):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(obs_dim + action_dim, embed_dim),
+            nn.SiLU(),
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, embed_dim),
+            nn.SiLU(),
+            nn.LayerNorm(embed_dim),
+        )
+
+    def forward(self, obs, actions):
+        x = torch.cat([obs, actions], dim=-1)  # [B, N, obs+act]
+        return self.encoder(x)  # [B, N, embed_dim]
+
+
+class AttentionCritic(nn.Module):
+    def __init__(self, qvalue_config):
+        super().__init__()
+        self.device = qvalue_config["device"]
+        self.n_heads = qvalue_config["n_heads"]
+        self.n_agents = qvalue_config["n_agents"]
+        self.obs_dim = qvalue_config["observation_dim_per_agent"]
+        self.action_dim = qvalue_config["action_dim_per_agent"]
+        self.embed_dim = qvalue_config["embed_dim"]
+
+        self.agent_encoder = AgentEncoder(self.obs_dim, self.action_dim, self.embed_dim)
+
+        self.attn = nn.MultiheadAttention(embed_dim=self.embed_dim, num_heads=self.n_heads, batch_first=True)
+
+        self.processor = nn.Sequential(
+            nn.Linear(self.embed_dim, self.embed_dim),
+            nn.SiLU(),
+            nn.LayerNorm(self.embed_dim),
+            nn.Linear(self.embed_dim, self.embed_dim),
+            nn.SiLU(),
+            nn.LayerNorm(self.embed_dim),
+        )
+
+        self.q_head_1 = nn.Sequential(
+            nn.Linear(self.embed_dim, self.embed_dim),
+            nn.SiLU(),
+            nn.LayerNorm(self.embed_dim),
+            nn.Linear(self.embed_dim, 1),
+        )
+
+        self.q_head_2 = nn.Sequential(
+            nn.Linear(self.embed_dim, self.embed_dim),
+            nn.SiLU(),
+            nn.LayerNorm(self.embed_dim),
+            nn.Linear(self.embed_dim, 1),
+        )
+
+    def forward(self, obs, actions):
+        # obs/actions: [B, N, D]
+        x = self.agent_encoder(obs, actions)  # [B, N, embed_dim]
+        attn_out, _ = self.attn(x, x, x)  # self-attention across agents
+        x = x + attn_out  # residual connection
+        x = self.processor(x)  
+        pooled = x.mean(dim=1)  # [B, embed_dim]
+        q1 = self.q_head_1(pooled)  # [B, 1]
+        q2 = self.q_head_2(pooled)
+        return q1, q2
