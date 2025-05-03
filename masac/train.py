@@ -238,12 +238,15 @@ class Trainer:
         self.logger.info("Global step: %d, Update step: %d", self.global_step, self.update_step)
     
     def calculate_actor_pass(self, obs, rand_nums=None):
-        obs = obs.view(-1, self._obs_dim)
-        # When sampling next actions, also need to sample random numbers
         if rand_nums is None:
-            rand_nums = torch.zeros(
+            rand_nums = torch.rand(
                 obs.shape[0], self.config.NUMBER_AGENTS, device=self.device
             )
+            rand_nums = get_permuted_env_random_numbers(
+                rand_nums, self.config.NUMBER_AGENTS, obs.shape[0], self.device
+            ).contiguous().view(-1, self.config.NUMBER_AGENTS)
+        obs = obs.view(-1, self._obs_dim)
+        # When sampling next actions, also need to sample random numbers
         actions, log_probs = self.actor(obs, rand_nums)
         actions = actions.view(-1, self.config.NUMBER_AGENTS, self._action_dim)
         log_probs = log_probs.view(-1, self.config.NUMBER_AGENTS)
