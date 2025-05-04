@@ -82,6 +82,11 @@ class RandomAgentPolicy(nn.Module):
             nn.SiLU(),
             nn.Linear(self.hidden_dim, 2)
         )
+
+        # Init high std weights
+
+        self.std_processor[-1].bias.data.fill_(0.1)
+        self.mean_processor[-1].bias.data.fill_(0.0)
     
     def get_mean_std(self, obs, random_numbers):
         cur_pos, cur_vel, landmarks, other_agents = env_parser(obs, self.number_agents)

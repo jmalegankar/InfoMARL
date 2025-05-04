@@ -319,25 +319,26 @@ class Trainer:
             # Update actor
             self.actor_optimizer.step()
 
-            # Calculate alpha loss
-            alpha_loss = self.compute_alpha_loss(obs)
-            # Update alpha
-            self.alpha_optimizer.zero_grad()
-            alpha_loss.backward()
-            self.alpha_optimizer.step()
-
-            # Clip alpha value
-            with torch.no_grad():
-                self.alpha.clamp_(self.config.ALPHA_MIN, self.config.ALPHA_MAX)
-
             actor_loss = actor_loss.item()
-            alpha_loss = alpha_loss.item()
         else:
             actor_loss = None
-            alpha_loss = None
         
         critic_loss = critic_loss.item()
+
+
+        # Calculate alpha loss
+        alpha_loss = self.compute_alpha_loss(obs)
+        # Update alpha
+        self.alpha_optimizer.zero_grad()
+        alpha_loss.backward()
+        self.alpha_optimizer.step()
+
+        # Clip alpha value
+        with torch.no_grad():
+            self.alpha.clamp_(self.config.ALPHA_MIN, self.config.ALPHA_MAX)
         
+        alpha_loss = alpha_loss.item()
+
         # Soft update the target critic
         for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
             target_param.data.copy_(self.config.TAU * param.data + (1.0 - self.config.TAU) * target_param.data)
