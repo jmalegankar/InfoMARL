@@ -17,7 +17,7 @@ DEVICE = None
 # Model Hyperparameters
 
 ACTOR_MODULE = "RandomAgentPolicy"
-CRITIC_MODULE = "RAP_qvalue"
+CRITIC_MODULE = "AttentionCritic"
 
 ACTOR_LR = 1e-5
 CRITIC_LR = 1e-5

@@ -129,6 +129,8 @@ class Trainer:
 
         qvalue_config = {
             "device": self.device,
+            "embed_dim": 128,
+            "n_heads": 4,
             "n_agents": self.config.NUMBER_AGENTS,
             "observation_dim_per_agent": self._obs_dim,
             "action_dim_per_agent": self._action_dim,
