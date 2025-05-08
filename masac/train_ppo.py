@@ -2,15 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import vmas
-from actor import PPOAgentPolicy
+from actor import RandomAgentPolicy
 import utils
 import os
 import logging
 from torch.utils.tensorboard import SummaryWriter
 from buffer import PPORolloutBuffer
-
+import numpy as np
 import config
 from tqdm import tqdm
+
 
 def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs, device):
     """
@@ -33,9 +34,11 @@ class PPOTrainer:
         logging.basicConfig(**config.BASIC_CONFIG)
         self._setup_done = False
         
+        # Model parameters
         self.actor = None
         self.actor_optimizer = None
 
+        # Training parameters
         self.buffer = None
         self.buffer_device = None
         self.env = None
@@ -43,8 +46,10 @@ class PPOTrainer:
         self.update_step = 0
         self.device = None
 
+        # Logging parameters
         self.writer = None
 
+        # Internal parameters for ease
         self._obs_dim = None
         self._action_dim = None
     
@@ -55,13 +60,14 @@ class PPOTrainer:
         
         self._setup_done = True
 
+        # Set up devices
         if self.config.DEVICE is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(self.config.DEVICE)
         
         self.logger.info("Using device: %s", self.device)
-        
+
         if self.config.BUFFER_DEVICE is None:
             self.buffer_device = self.device
         else:
@@ -69,6 +75,7 @@ class PPOTrainer:
         
         self.logger.info("Buffer device: %s", self.buffer_device)
         
+        # Set up environment
         self.env = vmas.make_env(
             scenario=self.config.ENV_NAME,
             n_agents=self.config.NUMBER_AGENTS,
@@ -92,6 +99,7 @@ class PPOTrainer:
         self._obs_dim = self.env.observation_space[0].shape[0]
         self._action_dim = self.env.action_space[0].shape[0]
 
+        # Set up Buffer for PPO
         self.buffer = PPORolloutBuffer(
             self.config.ROLLOUT_STEPS,
             self._obs_dim,
@@ -102,19 +110,22 @@ class PPOTrainer:
             gae_lambda=self.config.GAE_LAMBDA
         )
 
-        self.actor = PPOAgentPolicy(
+        # Set up the actor-critic network
+        self.actor = RandomAgentPolicy(
             self.config.NUMBER_AGENTS,
             agent_dim=self._action_dim,
             landmark_dim=self._action_dim,
             hidden_dim=self.config.ACTOR_HIDDEN_DIM
         ).to(self.device)
 
+        # Set up Optimizer
         self.actor_optimizer = getattr(torch.optim, self.config.ACTOR_OPTIMIZER)(
             self.actor.parameters(),
             lr=self.config.ACTOR_LR,
             **self.config.ACTOR_OPTIMIZER_PARAMS
         )
 
+        # Set up learning rate scheduler if needed
         if hasattr(self.config, 'LR_SCHEDULER') and self.config.LR_SCHEDULER:
             self.lr_scheduler = torch.optim.lr_scheduler.LinearLR(
                 self.actor_optimizer, 
@@ -199,23 +210,43 @@ class PPOTrainer:
     
     def collect_rollouts(self):
         """
-        Collect experience rollouts for PPO training
+        Collect experience rollouts for PPO training with enhanced debugging
         """
+        self.logger.info("Starting rollout collection...")
+        
+        # Set actor to evaluation mode during rollout collection
         self.actor.eval()
+        
+        # Reset episode returns and lengths tracking
+        episode_returns = []
+        episode_lengths = []
         
         # Get initial observations
         obs = self.env.reset()
+        
+        # Debug - print initial observations
+        self.logger.info(f"Initial obs shape: {len(obs)}, First agent obs shape: {obs[0].shape}")
+        self.logger.info(f"Sample initial obs values: {obs[0][0, :5]}")  # Print first 5 values
+        
         obs = torch.stack(obs, dim=1).view(
             self.config.NUMBER_AGENTS, self.config.NUM_ENVS, -1
         ).transpose(1, 0).to(self.device).contiguous()
         
+        # Clear the buffer for new rollouts
         self.buffer.clear()
         
+        # Track total steps collected
         total_steps = 0
         
+        # Track raw rewards (before scaling) for debugging
+        raw_rewards = []
+        scaled_rewards = []
+        
         # Start collecting rollouts
+        self.logger.info("Beginning rollout loop...")
         with torch.no_grad():
             while total_steps < self.config.ROLLOUT_STEPS:
+                # Generate random numbers for the environment
                 rand_nums = torch.rand(
                     self.config.NUM_ENVS, self.config.NUMBER_AGENTS, device=self.device
                 )
@@ -224,21 +255,43 @@ class PPOTrainer:
                 )
                 rand_nums_flat = rand_nums.view(-1, self.config.NUMBER_AGENTS)
                 
+                # Flatten observations for the actor
                 obs_flat = obs.view(-1, self._obs_dim)
                 
+                # Get actions, log probs, and values from the actor
                 actions, log_probs, values = self.actor(obs_flat, rand_nums_flat)
                 
+                # Debug - occasionally print action and value statistics
+                if total_steps % 500 == 0 or total_steps == 0:
+                    self.logger.info(f"Step {total_steps} action stats - Mean: {actions.mean().item():.6f}, "
+                                f"Min: {actions.min().item():.6f}, Max: {actions.max().item():.6f}")
+                    self.logger.info(f"Step {total_steps} value stats - Mean: {values.mean().item():.6f}, "
+                                f"Min: {values.min().item():.6f}, Max: {values.max().item():.6f}")
+                
+                # Reshape for environment step
                 actions_env = actions.view(self.config.NUMBER_AGENTS, self.config.NUM_ENVS, self._action_dim)
                 
-                next_obs, rewards, terminated, truncated, _ = self.env.step(actions_env)
+                # Take a step in the environment
+                next_obs, rewards, terminated, truncated, info = self.env.step(actions_env)
+                
+                # Debug - check rewards
+                if total_steps % 500 == 0 or total_steps == 0:
+                    reward_list = [r.mean().item() for r in rewards]
+                    self.logger.info(f"Step {total_steps} per-agent rewards: {reward_list}")
                 
                 # Calculate sum of rewards across agents
                 reward_sum = sum(rewards)
                 
+                # Store raw rewards for debugging
+                raw_rewards.extend(reward_sum.cpu().numpy())
+                scaled_rewards.extend((reward_sum * self.config.REWARD_SCALE).cpu().numpy())
+                
+                # Process observations
                 next_obs = torch.stack(next_obs, dim=1).view(
                     self.config.NUMBER_AGENTS, self.config.NUM_ENVS, -1
                 ).transpose(1, 0).to(self.device).contiguous()
                 
+                # Calculate done flags
                 dones = torch.logical_or(terminated, truncated).float().to(self.device)
                 
                 # Reshape actions and values for storage
@@ -258,8 +311,9 @@ class PPOTrainer:
                         rand_nums[i]
                     )
                     
-                    # Track episode returns and lengths
+                    # Track episode completions
                     if dones[i]:
+                        self.logger.info(f"Episode completed in env {i}")
                         # Reset this environment
                         env_obs = self.env.reset_at(i)
                         if env_obs is not None:
@@ -276,6 +330,16 @@ class PPOTrainer:
                 total_steps += self.config.NUM_ENVS
                 self.global_step += self.config.NUM_ENVS
         
+        # Print reward statistics
+        if raw_rewards:
+            self.logger.info(f"Rollout reward stats - Raw: mean={np.mean(raw_rewards):.6f}, "
+                        f"min={np.min(raw_rewards):.6f}, max={np.max(raw_rewards):.6f}")
+            self.logger.info(f"Rollout reward stats - Scaled: mean={np.mean(scaled_rewards):.6f}, "
+                        f"min={np.min(scaled_rewards):.6f}, max={np.max(scaled_rewards):.6f}")
+                        
+        # Finalize the buffer with last values
+        # Get last values for incomplete episodes
+        self.logger.info("Computing final values for incomplete episodes...")
         with torch.no_grad():
             rand_nums = torch.rand(
                 self.config.NUM_ENVS, self.config.NUMBER_AGENTS, device=self.device
@@ -288,47 +352,105 @@ class PPOTrainer:
             obs_flat = obs.view(-1, self._obs_dim)
             _, _, last_values = self.actor(obs_flat, rand_nums_flat)
             last_values = last_values.view(self.config.NUM_ENVS, self.config.NUMBER_AGENTS)
+            
+            self.logger.info(f"Final values - Mean: {last_values.mean().item():.6f}, "
+                        f"Min: {last_values.min().item():.6f}, Max: {last_values.max().item():.6f}")
         
+        # Finalize buffer with computed last values
         self.buffer.finalize_buffer(last_values)
         
+        self.logger.info(f"Rollout collection completed. Total steps: {total_steps}")
         return total_steps
     
     def update_policy(self):
-        """
-        Update policy using PPO algorithm
-        """
+        """Update policy using PPO algorithm with enhanced debugging"""
+        # Set actor to training mode
         self.actor.train()
         
         # Track statistics
         mean_policy_loss = 0
         mean_value_loss = 0
         mean_entropy = 0
+        mean_approx_kl = 0
+        mean_clipfrac = 0
         update_count = 0
         
+        # Print buffer stats
+        if self.buffer.size > 0:
+            returns = self.buffer.returns_buf[:self.buffer.size]
+            values = self.buffer.values_buf[:self.buffer.size]
+            advantages = self.buffer.advantages_buf[:self.buffer.size]
+            log_probs = self.buffer.old_log_probs_buf[:self.buffer.size]
+            rewards = self.buffer.rewards_buf[:self.buffer.size]
+            
+            self.logger.info(f"Buffer stats before update:")
+            self.logger.info(f"  Size: {self.buffer.size}")
+            self.logger.info(f"  Rewards: mean={rewards.mean().item():.6f}, std={rewards.std().item():.6f}, "
+                        f"min={rewards.min().item():.6f}, max={rewards.max().item():.6f}")
+            self.logger.info(f"  Returns: mean={returns.mean().item():.6f}, std={returns.std().item():.6f}, "
+                        f"min={returns.min().item():.6f}, max={returns.max().item():.6f}")
+            self.logger.info(f"  Values: mean={values.mean().item():.6f}, std={values.std().item():.6f}, "
+                        f"min={values.min().item():.6f}, max={values.max().item():.6f}")
+            self.logger.info(f"  Advantages: mean={advantages.mean().item():.6f}, std={advantages.std().item():.6f}, "
+                        f"min={advantages.min().item():.6f}, max={advantages.max().item():.6f}")
+            self.logger.info(f"  Log probs: mean={log_probs.mean().item():.6f}, std={log_probs.std().item():.6f}, "
+                        f"min={log_probs.min().item():.6f}, max={log_probs.max().item():.6f}")
+        
+        # Add a check for advantages - if they're all zero, print a warning
+        if self.buffer.advantages_buf[:self.buffer.size].abs().sum().item() < 1e-6:
+            self.logger.warning("ALL ADVANTAGES ARE EFFECTIVELY ZERO! Training will not progress.")
+            
+        # Perform multiple epochs of updates
         for epoch in range(self.config.PPO_EPOCHS):
+            self.logger.info(f"Starting PPO update epoch {epoch+1}/{self.config.PPO_EPOCHS}")
+            epoch_policy_loss = 0
+            epoch_value_loss = 0
+            epoch_entropy = 0
+            epoch_update_count = 0
+            
             # Get batches from buffer
-            for batch_data in self.buffer.get_batches(self.config.BATCH_SIZE, normalize_advantages=True):
+            for batch_idx, batch_data in enumerate(self.buffer.get_batches(self.config.BATCH_SIZE, normalize_advantages=True)):
                 obs_batch, actions_batch, old_log_probs_batch, old_values_batch, returns_batch, advantages_batch, random_numbers_batch = batch_data
                 
+                # Debug info - print stats for a few batches
+                if batch_idx == 0 or batch_idx == 5:
+                    self.logger.info(f"Batch {batch_idx} - Advantages: mean={advantages_batch.mean().item():.6f}, "
+                                f"std={advantages_batch.std().item():.6f}, min={advantages_batch.min().item():.6f}, "
+                                f"max={advantages_batch.max().item():.6f}")
+                
+                # Flatten batch data for processing
                 batch_size = obs_batch.shape[0]
                 obs_flat = obs_batch.view(-1, self._obs_dim)
                 actions_flat = actions_batch.view(-1, self._action_dim)
                 random_numbers_flat = random_numbers_batch.view(-1, self.config.NUMBER_AGENTS)
                 
+                # Get new log probs, values, and entropy
                 new_log_probs, new_values, entropy = self.actor.evaluate_actions(
                     obs_flat, actions_flat, random_numbers_flat
                 )
                 
+                # Reshape to match batch dimensions
                 new_log_probs = new_log_probs.view(batch_size, self.config.NUMBER_AGENTS)
                 new_values = new_values.view(batch_size, self.config.NUMBER_AGENTS)
                 entropy = entropy.view(batch_size, self.config.NUMBER_AGENTS)
                 
+                # Calculate approximate KL divergence for monitoring
+                with torch.no_grad():
+                    log_ratio = new_log_probs - old_log_probs_batch
+                    approx_kl = ((torch.exp(log_ratio) - 1) - log_ratio).mean().item()
+                    mean_approx_kl += approx_kl
+                
                 # Calculate ratios for PPO
-                ratios = torch.exp(new_log_probs - old_log_probs_batch)
+                ratios = torch.exp(log_ratio)
                 
                 # Calculate surrogate losses
                 surr1 = ratios * advantages_batch
                 surr2 = torch.clamp(ratios, 1.0 - self.config.PPO_CLIP_PARAM, 1.0 + self.config.PPO_CLIP_PARAM) * advantages_batch
+                
+                # Calculate clipping fraction for monitoring
+                with torch.no_grad():
+                    clipfracs = ((ratios - 1.0).abs() > self.config.PPO_CLIP_PARAM).float().mean().item()
+                    mean_clipfrac += clipfracs
                 
                 # Calculate policy loss
                 policy_loss = -torch.min(surr1, surr2).mean()
@@ -356,36 +478,84 @@ class PPOTrainer:
                     - self.config.PPO_ENTROPY_COEF * entropy_loss
                 )
                 
+                # Print loss components for the first batch
+                if batch_idx == 0:
+                    self.logger.info(f"Loss components - Policy: {policy_loss.item():.6f}, "
+                                f"Value: {value_loss.item():.6f}, Entropy: {entropy_loss.item():.6f}")
+                    self.logger.info(f"Policy metrics - KL: {approx_kl:.6f}, Clip fraction: {clipfracs:.6f}")
+                    self.logger.info(f"Ratio stats - Mean: {ratios.mean().item():.6f}, Min: {ratios.min().item():.6f}, "
+                                f"Max: {ratios.max().item():.6f}")
+                
+                # Update actor-critic network
                 self.actor_optimizer.zero_grad()
                 loss.backward()
                 
+                # Debug gradient norms
+                if batch_idx == 0:
+                    grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in self.actor.parameters() if p.grad is not None) ** 0.5
+                    self.logger.info(f"Gradient norm: {grad_norm:.6f}")
+                    
+                    # Check for any NaN gradients
+                    has_nan = False
+                    for name, param in self.actor.named_parameters():
+                        if param.grad is not None and torch.isnan(param.grad).any():
+                            has_nan = True
+                            self.logger.error(f"NaN gradient detected in {name}")
+                    
+                    if has_nan:
+                        self.logger.error("NaN gradients detected! This will disrupt training.")
+                
+                # Optional gradient clipping
                 if self.config.PPO_MAX_GRAD_NORM > 0:
                     nn.utils.clip_grad_norm_(self.actor.parameters(), self.config.PPO_MAX_GRAD_NORM)
                 
                 self.actor_optimizer.step()
                 
                 # Track statistics
+                epoch_policy_loss += policy_loss.item()
+                epoch_value_loss += value_loss.item()
+                epoch_entropy += entropy_loss.item()
+                epoch_update_count += 1
+                
                 mean_policy_loss += policy_loss.item()
                 mean_value_loss += value_loss.item()
                 mean_entropy += entropy_loss.item()
                 update_count += 1
                 self.update_step += 1
+            
+            # Print epoch stats
+            if epoch_update_count > 0:
+                self.logger.info(f"Epoch {epoch+1} stats - Policy loss: {epoch_policy_loss/epoch_update_count:.6f}, "
+                            f"Value loss: {epoch_value_loss/epoch_update_count:.6f}, "
+                            f"Entropy: {epoch_entropy/epoch_update_count:.6f}")
         
         # Update learning rate if scheduler is used
         if self.lr_scheduler:
+            old_lr = self.lr_scheduler.get_last_lr()[0]
             self.lr_scheduler.step()
-            current_lr = self.lr_scheduler.get_last_lr()[0]
-            self.writer.add_scalar("Training/LearningRate", current_lr, self.global_step)
+            new_lr = self.lr_scheduler.get_last_lr()[0]
+            self.writer.add_scalar("Training/LearningRate", new_lr, self.global_step)
+            self.logger.info(f"Learning rate updated: {old_lr:.6f} -> {new_lr:.6f}")
         
         # Calculate averages
         if update_count > 0:
             mean_policy_loss /= update_count
             mean_value_loss /= update_count
             mean_entropy /= update_count
+            mean_approx_kl /= update_count
+            mean_clipfrac /= update_count
+            
+            # Log additional metrics
+            self.writer.add_scalar("Loss/KL", mean_approx_kl, self.global_step)
+            self.writer.add_scalar("Loss/ClipFraction", mean_clipfrac, self.global_step)
+            
+            # Log additional training information
+            self.logger.info(f"Training stats summary - KL: {mean_approx_kl:.6f}, Clip fraction: {mean_clipfrac:.6f}")
         
         return mean_policy_loss, mean_value_loss, mean_entropy
     
     def train(self):
+        """Main training loop with enhanced debugging"""
         self.do_setup()
         
         if self.config.RESUME_FROM_CHECKPOINT:
@@ -406,14 +576,19 @@ class PPOTrainer:
             self.logger.info(f"Collecting rollouts (Step {self.global_step})...")
             steps_collected = self.collect_rollouts()
             
+            # Debug - Check if we're collecting any rewards
+            avg_rewards = self.buffer.rewards_buf[:self.buffer.size].mean().item()
+            min_rewards = self.buffer.rewards_buf[:self.buffer.size].min().item()
+            max_rewards = self.buffer.rewards_buf[:self.buffer.size].max().item()
+            self.logger.info(f"Rewards stats - Mean: {avg_rewards:.6f}, Min: {min_rewards:.6f}, Max: {max_rewards:.6f}")
+            
+            # Debug - Check if done flags are being set
+            dones_ratio = self.buffer.dones_buf[:self.buffer.size].float().mean().item()
+            self.logger.info(f"Dones ratio: {dones_ratio:.6f} (Episodes completing: {dones_ratio * 100:.2f}%)")
+            
             # Update policy using PPO
             self.logger.info(f"Updating policy (Step {self.global_step})...")
             policy_loss, value_loss, entropy = self.update_policy()
-            
-            # Log statistics
-            self.writer.add_scalar("Loss/Policy", policy_loss, self.global_step)
-            self.writer.add_scalar("Loss/Value", value_loss, self.global_step)
-            self.writer.add_scalar("Loss/Entropy", entropy, self.global_step)
             
             # Save checkpoint
             if self.global_step % self.config.CHECKPOINT_INTERVAL_UPDATE == 0:
@@ -425,8 +600,8 @@ class PPOTrainer:
             
             # Log training progress
             self.logger.info(f"Step: {self.global_step}/{self.config.NUM_TIMESTEPS} | "
-                            f"Policy Loss: {policy_loss:.4f} | Value Loss: {value_loss:.4f} | "
-                            f"Entropy: {entropy:.4f}")
+                            f"Policy Loss: {policy_loss:.6f} | Value Loss: {value_loss:.6f} | "
+                            f"Entropy: {entropy:.6f}")
         
         # Save final checkpoint
         self.save_checkpoint()

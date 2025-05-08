@@ -1,6 +1,7 @@
 import torch
 from collections import deque
 import random
+import numpy as np
 
 class ReplayBuffer:
     def __init__(self, capacity, obs_dim, action_dim, n_agents, device):
@@ -185,18 +186,17 @@ class PPORolloutBuffer:
         self.ptr = (self.ptr + 1) % self.buffer_size
         self.size = min(self.size + 1, self.buffer_size)
         
-        # reached a terminal state, compute advantages and returns for this episode
         if done:
             self.compute_advantages_and_returns(self.episode_start_idx, self.ptr - 1)
             self.episode_start_idx = self.ptr
     
     def compute_advantages_and_returns(self, start_idx, end_idx, last_value=None):
-
-        # full episode
-        episode_length = end_idx - start_idx + 1
+        """Compute Generalized Advantage Estimation (GAE) and returns with debugging"""
+        print(f"\n--- DEBUG: Computing advantages from {start_idx} to {end_idx} ---")
         
-        # extract episode data
+        # Extract episode data
         if end_idx >= start_idx:
+            # Extract continuous episode
             rewards = self.rewards_buf[start_idx:end_idx+1]
             values = self.values_buf[start_idx:end_idx+1]
             dones = self.dones_buf[start_idx:end_idx+1]
@@ -205,27 +205,66 @@ class PPORolloutBuffer:
             rewards = torch.cat([self.rewards_buf[start_idx:], self.rewards_buf[:end_idx+1]])
             values = torch.cat([self.values_buf[start_idx:], self.values_buf[:end_idx+1]])
             dones = torch.cat([self.dones_buf[start_idx:], self.dones_buf[:end_idx+1]])
-            
-        # Calculate GAE with mask for separate episodes
+        
+        # Print episode statistics
+        print(f"Episode length: {len(rewards)}")
+        print(f"Rewards - Mean: {rewards.mean().item():.6f}, Min: {rewards.min().item():.6f}, Max: {rewards.max().item():.6f}")
+        print(f"Values - Mean: {values.mean().item():.6f}, Min: {values.min().item():.6f}, Max: {values.max().item():.6f}")
+        print(f"Dones - Count: {dones.sum().item()}/{len(dones)}")
+        
+        # Calculate GAE
+        episode_length = len(rewards)
         advantages = torch.zeros((episode_length, self.n_agents), device=self.device)
-        last_gae = 0
+        last_gae = torch.zeros(self.n_agents, device=self.device)
+        
+        # Print gamma and lambda parameters
+        print(f"GAE parameters - gamma: {self.gamma}, lambda: {self.gae_lambda}")
+        
+        # Set the next value for the final step
+        if last_value is not None:
+            next_value = last_value
+            print(f"Using provided last_value: {next_value.mean().item():.6f}")
+        else:
+            if dones[-1]:
+                next_value = torch.zeros(self.n_agents, device=self.device)
+                print("Last step is terminal, using zero next_value")
+            else:
+                next_value = values[-1]
+                print(f"Last step is non-terminal, using last value: {next_value.mean().item():.6f}")
+        
+        # Debug info for first and last few steps
+        debug_indices = [0, 1, min(5, episode_length-1), max(0, episode_length-2), max(0, episode_length-1)]
         
         # Iterate backwards through episode
         for t in reversed(range(episode_length)):
             if t == episode_length - 1:
-                if last_value is not None:
-                    next_value = last_value
-                else:
-                    next_value = torch.zeros(self.n_agents, device=self.device) if dones[t] else values[t]
+                next_non_terminal = 1.0 - dones[t]
+                next_value_step = next_value
             else:
-                next_value = values[t+1]
+                next_non_terminal = 1.0 - dones[t]
+                next_value_step = values[t+1]
             
-            delta = rewards[t].unsqueeze(-1) + self.gamma * next_value * (1 - dones[t]) - values[t]
-            last_gae = delta + self.gamma * self.gae_lambda * (1 - dones[t]) * last_gae
+            # Calculate TD error (delta)
+            delta = rewards[t].unsqueeze(-1) + self.gamma * next_value_step * next_non_terminal - values[t]
+            
+            # Calculate GAE
+            last_gae = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae
             advantages[t] = last_gae
             
-        # Calculate returns: advantages + values
+            # Print debug info for selected steps
+            if t in debug_indices:
+                print(f"Step {t} - Reward: {rewards[t].item():.6f}, Value: {values[t, 0].item():.6f}, "
+                    f"Next value: {next_value_step[0].item():.6f}, Terminal: {bool(dones[t].item())}, "
+                    f"Delta: {delta[0].item():.6f}, Advantage: {last_gae[0].item():.6f}")
+        
+        # Calculate returns (advantages + values)
         returns = advantages + values
+        
+        # Print final advantage and returns statistics
+        print(f"Advantages - Mean: {advantages.mean().item():.6f}, Min: {advantages.min().item():.6f}, "
+            f"Max: {advantages.max().item():.6f}, Std: {advantages.std().item():.6f}")
+        print(f"Returns - Mean: {returns.mean().item():.6f}, Min: {returns.min().item():.6f}, "
+            f"Max: {returns.max().item():.6f}")
         
         # Store back in buffer
         if end_idx >= start_idx:
@@ -238,9 +277,13 @@ class PPORolloutBuffer:
             self.advantages_buf[:end_idx+1] = advantages[split_idx:]
             self.returns_buf[start_idx:] = returns[:split_idx]
             self.returns_buf[:end_idx+1] = returns[split_idx:]
+        
+        print("--- Advantage computation completed ---\n")
     
     def finalize_buffer(self, last_values=None):
-
+        """
+        Compute advantages and returns for the last incomplete episode
+        """
         if self.ptr != self.episode_start_idx:
             # We have an incomplete episode
             if self.ptr > self.episode_start_idx:
@@ -256,10 +299,19 @@ class PPORolloutBuffer:
         Normalize advantages for more stable training
         """
         if self.size > 0:
+            # Access only valid data
             advantages = self.advantages_buf[:self.size]
+            
+            # Normalize across all dimensions to handle multi-agent case properly
             mean = advantages.mean()
             std = advantages.std() + 1e-8
+            
+            # Apply normalization
             self.advantages_buf[:self.size] = (advantages - mean) / std
+            
+            # Log stats for debugging
+            print(f"Advantage stats - Mean: {mean.item():.4f}, Std: {std.item():.4f}, "
+                  f"Min: {advantages.min().item():.4f}, Max: {advantages.max().item():.4f}")
     
     def get_batches(self, batch_size, normalize_advantages=True):
         """

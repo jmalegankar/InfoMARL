@@ -57,7 +57,7 @@ ACTOR_OPTIMIZER_PARAMS = {
 LR_SCHEDULER = True
 
 
-REWARD_SCALE = 1.0 / NUMBER_AGENTS
+REWARD_SCALE = 1.0
 
 #########################################################################
 # Logging configuration
