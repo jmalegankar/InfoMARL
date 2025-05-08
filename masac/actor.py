@@ -1,5 +1,7 @@
+
 import torch
 import torch.nn as nn
+from torch.distributions import Normal
 
 def env_parser(obs:torch.Tensor, number_agents:int=3):
     #cur agents pos
@@ -145,3 +147,184 @@ class RandomAgentPolicy(nn.Module):
         log_prob = normal.log_prob(x_t) - torch.log(1 - action.pow(2) + 1e-6)
 
         return action, log_prob.sum(dim=-1)
+
+class PPOAgentPolicy(nn.Module):
+    def __init__(self, number_agents, agent_dim, landmark_dim, hidden_dim):
+        super().__init__()
+        self.number_agents = number_agents
+        self.agent_dim = agent_dim
+        self.landmark_dim = landmark_dim
+        self.hidden_dim = hidden_dim
+
+        self.cur_agent_embedding = nn.Sequential(
+            nn.Linear(self.agent_dim * 2, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+        )
+        
+        self.landmark_embedding = nn.Sequential(
+            nn.Linear(landmark_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+        )
+
+        self.landmark_value = nn.Sequential(
+            nn.Linear(landmark_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+        )
+        
+        self.all_agent_embedding = nn.Sequential(
+            nn.Linear(self.agent_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+        )
+        
+        self.cross_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
+
+        self.processor = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+        )
+
+        self.landmark_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
+        
+        # Mean and std networks for the policy
+        self.mean_processor = nn.Sequential(
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, 2)
+        )
+        
+        self.log_std_processor = nn.Sequential(
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, 2)
+        )
+        
+        # Value network for PPO (critic)
+        self.value_head = nn.Sequential(
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, 1)
+        )
+
+        # Initialize weights
+        self.log_std_processor[-1].bias.data.fill_(-0.5)
+        self.mean_processor[-1].bias.data.fill_(0.0)
+
+    def get_features(self, obs, random_numbers):
+        cur_pos, cur_vel, landmarks, other_agents = env_parser(obs, self.number_agents)
+        cur_agent = torch.cat((cur_pos, cur_vel), dim=-1)
+        all_agents_list = torch.cat((cur_pos.unsqueeze(1), other_agents), dim=1)
+
+        # Encode current agent
+        cur_agent_embeddings = self.cur_agent_embedding(cur_agent)
+        
+        # Encode landmarks
+        landmark_embeddings = self.landmark_embedding(
+            landmarks.view(-1, 2)
+        ).view(-1, self.number_agents, self.hidden_dim)
+
+        landmark_value = self.landmark_value(
+            landmarks.view(-1, 2)
+        ).view(-1, self.number_agents, self.hidden_dim)
+
+        # Encode all agents
+        all_agents_embeddings = self.all_agent_embedding(
+            all_agents_list.view(-1, 2)
+        ).view(-1, self.number_agents, self.hidden_dim)
+
+        # Cross attention between landmarks and agents
+        agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1,1))
+        attention_output, _ = self.cross_attention(
+            query=landmark_embeddings,
+            key=all_agents_embeddings,
+            value=all_agents_embeddings,
+            attn_mask = agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1),
+            need_weights=False
+        )
+
+        attention_output = self.processor(attention_output)
+
+        # Attention between current agent and landmarks
+        attention_output = self.landmark_attention(
+            cur_agent_embeddings.unsqueeze(dim=-2), attention_output, landmark_value, need_weights=False
+        )[0].squeeze(dim=-2)
+
+        # Concatenate features for final layers
+        latent = torch.cat((cur_agent_embeddings, attention_output), dim=-1)
+        
+        return latent
+
+    def get_policy_dist(self, latent):
+        mean = self.mean_processor(latent)
+        
+        # Get log_std with constraints for numerical stability
+        log_std = self.log_std_processor(latent)
+        log_std = torch.clamp(log_std, min=-20, max=2)
+        
+        return mean, log_std
+    
+    def get_value(self, latent):
+        return self.value_head(latent)
+    
+    def evaluate_actions(self, obs, actions, random_numbers):
+        latent = self.get_features(obs, random_numbers)
+        
+        # Get policy distribution
+        mean, log_std = self.get_policy_dist(latent)
+        std = log_std.exp()
+        
+        # Create normal distribution
+        dist = Normal(mean, std)
+        
+        # Get log probs of actions
+        action_log_probs = dist.log_prob(actions).sum(-1)
+        
+        # Get entropy
+        entropy = dist.entropy().sum(-1)
+        
+        # Get state values
+        values = self.get_value(latent).squeeze(-1)
+        
+        return action_log_probs, values, entropy
+    
+    def forward(self, obs, random_numbers):
+        latent = self.get_features(obs, random_numbers)
+        
+        # Get policy distribution parameters
+        mean, log_std = self.get_policy_dist(latent)
+        std = log_std.exp()
+        
+        # Create normal distribution
+        dist = Normal(mean, std)
+        
+        # Sample actions and calculate log probabilities
+        if self.training:
+            actions = dist.sample()
+        else:
+            actions = mean 
+        
+        # Calculate log probabilities
+        log_probs = dist.log_prob(actions).sum(-1)
+        
+        # Get state values
+        values = self.get_value(latent).squeeze(-1)
+        
+        # Apply tanh squashing for bounded actions
+        actions = torch.tanh(actions)
+        
+        return actions, log_probs, values
