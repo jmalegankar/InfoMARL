@@ -3,9 +3,9 @@ SEED = 42
 ########################################################################
 # Environment Configuration
 
-NUM_ENVS = 64
+NUM_ENVS = 3
 NUMBER_AGENTS = 4
-MAX_EPISODE_LENGTH = 400
+MAX_EPISODE_LENGTH = 2
 
 ENV_NAME = "simple_spread"
 

@@ -311,17 +311,6 @@ class PPOTrainer:
                         rand_nums[i]
                     )
                     
-                    # Track episode completions
-                    if dones[i]:
-                        self.logger.info(f"Episode completed in env {i}")
-                        # Reset this environment
-                        env_obs = self.env.reset_at(i)
-                        if env_obs is not None:
-                            env_obs_tensor = torch.stack(env_obs, dim=1).view(
-                                self.config.NUMBER_AGENTS, 1, -1
-                            ).transpose(1, 0).to(self.device).contiguous()
-                            # Update observation for this environment
-                            obs[i] = env_obs_tensor[0]
                 
                 # Update observation
                 obs = next_obs
