@@ -11,11 +11,11 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 env = vmas.make_env(
     scenario="simple_spread",
     n_agents=4,
-    num_envs=64,
+    num_envs=16,
     continuous_actions=True,
     max_steps=400,
     seed=42,
-    device="cuda",
+    device=device,
     terminated_truncated=True,
 )
 
