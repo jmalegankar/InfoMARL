@@ -120,7 +120,7 @@ class RandomAgentPolicy(nn.Module):
             key=all_agents_embeddings,
             value=all_agents_embeddings,
             attn_mask=agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1),
-            need_weights=False
+            need_weights=True
         )
         self.last_attn_weights = cross_weights
 

@@ -32,37 +32,46 @@ def animate_attention(attentions, output_path='attention_heatmap.gif', fps=5):
     plt.close(fig)
     print(f"Saved animation to {output_path}")
 
+
+
 device = model.device
 
-# 1) reset and warm‐up
 obs = env.reset()
 attn_buffer = []
-
 done = False
+
 while not done:
-    actions, _states = model.predict(obs, deterministic=True)
-    
-    
+    actions, _ = model.predict(obs, deterministic=True)
+
     obs_tensor = torch.as_tensor(obs, device=device).float()
 
-    # run through policy and stash the weights
-    _ = model.policy.actor(obs_tensor)
-    
-    #shape = (num_envs * num_agents, num_heads, q_len, k_len)
-    w = model.policy.actor.last_attn_weights.cpu().numpy()
-    
-    # reshape/aggregate:
-    # for simplicity take env 0 only, and drop the head dimension
-    num_envs = env.num_envs
-    na = model.policy.actor.number_agents
-    w = w.reshape(num_envs, na, -1, -1)[0, :, 0, :]  # → shape (num_agents, num_agents)
-    # .mean(axis=0) for all envs
-    
-    attn_buffer.append(w)
-    
-    obs, rewards, dones, infos = env.step(actions)
+   
+    with torch.no_grad():
+        _ = model.policy.features_extractor(obs_tensor)
+
+
+    w = model.policy.features_extractor.actor.last_landmark_weights
+    w = w.cpu().numpy() # → (batch*agents, 1, n_agents)
+
+    # reshape into (n_envs, n_agents, 1, n_agents)
+    n_envs = getattr(env, "num_envs", None) or obs.shape[0]
+    n_agents = model.policy.features_extractor.n_agents
+    w = w.reshape(n_envs, n_agents, 1, n_agents)
+
+    # drop the “1” dimension (our single‐query token) → (n_envs, n_agents, n_agents)
+    w = w[:, :, 0, :]
+
+    # pick env‐0’s matrix
+    mat = w[0]
+
+    # normalize to [0,1] (optional but keeps colors consistent)
+    mat = mat / mat.max()
+
+    attn_buffer.append(mat)
+
+    obs, _, dones, _ = env.step(actions)
     done = dones.any()
 
-# 7) now render to GIF
+# 11) once collected, render out the GIF
 animate_attention(attn_buffer, output_path='agent_attention.gif', fps=5)
-print("Done! See agent_attention.gif")
+print("✅ Saved agent_attention.gif")

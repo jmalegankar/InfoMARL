@@ -28,4 +28,4 @@ model = PPO(
     verbose=1,
 )
 
-model.learn(total_timesteps=1000000, progress_bar=True)
+model.learn(total_timesteps=10000, progress_bar=True)
