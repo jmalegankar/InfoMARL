@@ -9,3 +9,7 @@ pod-jmalegaonkar-testpod.yaml
 checkpoints/
 data/
 evaluation_gifs/
+gifs/
+sb3/gifs/
+animations/
+sb3/animations/
