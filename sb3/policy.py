@@ -121,11 +121,11 @@ class RandomAgentPolicy(nn.Module):
             need_weights=False
         )
 
-        attention_output = self.processor(attention_output)
+        # attention_output = self.processor(attention_output)
 
         # Attention between current agent and processed landmarks
         attention_output = self.landmark_attention(
-            cur_agent_embeddings.unsqueeze(dim=-2), 
+            all_agents_embeddings[:, 0, :].unsqueeze(dim=-2), 
             attention_output, 
             landmark_value, 
             need_weights=False
@@ -198,8 +198,6 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
 
 from stable_baselines3.common.distributions import (
     make_proba_distribution,
-    StateDependentNoiseDistribution,
-    DiagGaussianDistribution,
 )
 
 class InfoMARLActorCriticPolicy(ActorCriticPolicy):
