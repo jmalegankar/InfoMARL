@@ -16,7 +16,7 @@ env = vmas.make_env(
     continuous_actions=True,
     max_steps=400,
     seed=42,
-    device="cuda",
+    device=device,
     terminated_truncated=True,
 )
 
