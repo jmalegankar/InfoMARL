@@ -40,8 +40,6 @@ class RandomAgentPolicy(nn.Module):
         self.landmark_dim = landmark_dim
         self.hidden_dim = hidden_dim
         self.training = True  # Add this to control behavior
-        self.last_attn_weights = None
-        self.last_landmark_weights = None
 
         # Network architecture for processing agent observations
         self.cur_agent_embedding = nn.Sequential(
@@ -118,7 +116,6 @@ class RandomAgentPolicy(nn.Module):
             attn_mask=agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1),
             need_weights=(not self.training),
         )
-        self.last_attn_weights = cross_weights
 
         landmark_value = self.landmark_value(
             landmarks.view(-1, 2)
@@ -136,7 +133,7 @@ class RandomAgentPolicy(nn.Module):
             need_weights=(not self.training),
         )
         attention_output = attention_output.squeeze(dim=-2)
-        self.last_landmark_weights = landmark_weights
+
         # Concatenate features for final processing
         latent = torch.cat((cur_agent_embeddings, attention_output), dim=-1)
 
