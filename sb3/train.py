@@ -35,11 +35,15 @@ else:
         verbose=1,
         batch_size=400,
         n_epochs=10,
-        max_grad_norm=10.0,
-        gamma=0.95,
+        gamma=0.99,
         n_steps=100,
+        vf_coef=0.5,
+        ent_coef=0.01,
+        target_kl=0.25,
+        normalize_advantage=False,
+        max_grad_norm=10.0,
     )
 
-for _ in range(10):
+for _ in range(100):
     model.learn(total_timesteps=1000000, progress_bar=True)
     model.save("ppo_infomarl")

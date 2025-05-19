@@ -64,7 +64,6 @@ class RandomAgentPolicy(nn.Module):
             nn.Linear(landmark_dim, self.hidden_dim),
             nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.SiLU(),
         )
         
         # Network for processing all agents' positions
@@ -78,8 +77,9 @@ class RandomAgentPolicy(nn.Module):
         # Attention mechanisms
         self.cross_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
         self.processor = nn.Sequential(
+            nn.Linear(self.hidden_dim*2, self.hidden_dim*2),
             nn.SiLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.Linear(self.hidden_dim*2, self.hidden_dim),
             nn.SiLU(),
         )
         self.landmark_attention = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=1, batch_first=True)
@@ -102,10 +102,6 @@ class RandomAgentPolicy(nn.Module):
             landmarks.view(-1, 2)
         ).view(-1, self.number_agents, self.hidden_dim)
 
-        landmark_value = self.landmark_value(
-            landmarks.view(-1, 2)
-        ).view(-1, self.number_agents, self.hidden_dim)
-
         # Encode all agents
         all_agents_embeddings = self.all_agent_embedding(
             all_agents_list.view(-1, 2)
@@ -124,20 +120,26 @@ class RandomAgentPolicy(nn.Module):
         )
         self.last_attn_weights = cross_weights
 
-        # attention_output = self.processor(attention_output)
+        landmark_value = self.landmark_value(
+            landmarks.view(-1, 2)
+        ).view(-1, self.number_agents, self.hidden_dim)
+
+        landmark_value = torch.cat((landmark_value, attention_output), dim=-1)
+
+        landmark_value = self.processor(landmark_value)
 
         # Attention between current agent and processed landmarks
         attention_output, landmark_weights = self.landmark_attention(
-            all_agents_embeddings[:, 0, :].unsqueeze(dim=-2), 
-            attention_output, 
-            landmark_value, 
+            cur_agent_embeddings.unsqueeze(dim=-2), 
+            attention_output,
+            landmark_value,
             need_weights=(not self.training),
         )
         attention_output = attention_output.squeeze(dim=-2)
         self.last_landmark_weights = landmark_weights
         # Concatenate features for final processing
         latent = torch.cat((cur_agent_embeddings, attention_output), dim=-1)
-        
+
         return latent.view(-1, self.number_agents, self.hidden_dim*2)
 
 
