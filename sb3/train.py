@@ -12,7 +12,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 env = vmas.make_env(
     scenario="simple_spread",
     n_agents=4,
-    num_envs=40,
+    num_envs=64,
     continuous_actions=True,
     max_steps=400,
     seed=42,
@@ -33,17 +33,16 @@ else:
         env=env,
         device=device,
         verbose=1,
-        batch_size=400,
+        batch_size=1024,
         n_epochs=10,
         gamma=0.99,
-        n_steps=100,
+        n_steps=160,
         vf_coef=0.5,
-        ent_coef=0.01,
         target_kl=0.25,
-        normalize_advantage=False,
         max_grad_norm=10.0,
+        learning_rate=1e-4,
     )
 
-for _ in range(100):
-    model.learn(total_timesteps=1000000, progress_bar=True)
+while True:
+    model.learn(total_timesteps=300000, progress_bar=True)
     model.save("ppo_infomarl")

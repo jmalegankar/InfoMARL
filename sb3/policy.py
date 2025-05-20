@@ -117,6 +117,8 @@ class RandomAgentPolicy(nn.Module):
             need_weights=(not self.training),
         )
 
+        self.cross_attention_weights = cross_weights
+
         landmark_value = self.landmark_value(
             landmarks.view(-1, 2)
         ).view(-1, self.number_agents, self.hidden_dim)
@@ -133,6 +135,8 @@ class RandomAgentPolicy(nn.Module):
             need_weights=(not self.training),
         )
         attention_output = attention_output.squeeze(dim=-2)
+
+        self.landmark_attention_weights = landmark_weights
 
         # Concatenate features for final processing
         latent = torch.cat((cur_agent_embeddings, attention_output), dim=-1)
