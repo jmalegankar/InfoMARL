@@ -74,13 +74,8 @@ class AttentionAnimator:
             ax = plt.subplot(cross_gs[i//2, i%2])
             self.ax_cross_attns.append(ax)
         
-        self.ax_landmark_attns = []
-        for i in range(self.n_agents):
-            if i < 2:
-                ax = plt.subplot(gs[1, i])
-            else:
-                ax = plt.subplot(gs[2, i-2])
-            self.ax_landmark_attns.append(ax)
+        # Create a single subplot for all landmark attentions
+        self.ax_landmark_attns = plt.subplot(gs[1:, 1])  # Takes up both bottom rows in right column
         
         self.ax_positions.set_title("Agent and Landmark Positions")
         self.ax_positions.set_xlim(-1.5, 1.5)
@@ -99,30 +94,57 @@ class AttentionAnimator:
         
         self.landmark_annotations = []
         
+        # Cross attention heatmaps
         self.cross_heatmaps = []
         for i, ax in enumerate(self.ax_cross_attns):
             ax.set_title(f"Agent {i} Cross Attention")
             dummy_cross = np.zeros((self.n_landmarks, self.n_agents))
-            heatmap = ax.imshow(dummy_cross, cmap="viridis", vmin=0, vmax=1, aspect='auto')
+            heatmap = ax.imshow(dummy_cross, cmap="viridis", vmin=0, vmax=1)
             self.cross_heatmaps.append(heatmap)
+            
+            # Add text annotations for values
+            for j in range(self.n_landmarks):
+                for k in range(self.n_agents):
+                    text = ax.text(k, j, f"{0:.2f}",
+                                 ha="center", va="center", color="w", fontsize=8)
+            
             ax.set_xticks(np.arange(self.n_agents))
             ax.set_yticks(np.arange(self.n_landmarks))
             ax.set_xticklabels(self.agent_labels)
             ax.set_yticklabels(self.landmark_labels)
         
-        self.landmark_heatmaps = []
-        for i, ax in enumerate(self.ax_landmark_attns):
-            ax.set_title(f"Agent {i} Landmark Attention")
-            dummy_landmark = np.zeros((1, self.n_landmarks))
-            heatmap = ax.imshow(dummy_landmark, cmap="viridis", vmin=0, vmax=1, aspect=3.0)
-            self.landmark_heatmaps.append(heatmap)
-            ax.set_xticks(np.arange(self.n_landmarks))
-            ax.set_yticks([0])
-            ax.set_xticklabels(self.landmark_labels)
-            ax.set_yticklabels([f"A{i}"])
+        # Landmark attention heatmap - now as a single plot
+        self.ax_landmark_attns.set_title("Landmark Attention Across Agents")
+        dummy_landmark = np.zeros((self.n_agents, self.n_landmarks))
+        self.landmark_heatmap = self.ax_landmark_attns.imshow(dummy_landmark, 
+                                                             cmap="viridis", 
+                                                             vmin=0, vmax=1,
+                                                             aspect='auto')
         
-        self.fig.colorbar(self.cross_heatmaps[0], ax=self.ax_cross_attns, fraction=0.05, pad=0.04)
-        self.fig.colorbar(self.landmark_heatmaps[-1], ax=self.ax_landmark_attns[-1])
+        # Add text annotations for values
+        for i in range(self.n_agents):
+            for j in range(self.n_landmarks):
+                text = self.ax_landmark_attns.text(j, i, f"{0:.2f}",
+                                                  ha="center", va="center", 
+                                                  color="w", fontsize=8)
+        
+        self.ax_landmark_attns.set_xticks(np.arange(self.n_landmarks))
+        self.ax_landmark_attns.set_yticks(np.arange(self.n_agents))
+        self.ax_landmark_attns.set_xticklabels(self.landmark_labels)
+        self.ax_landmark_attns.set_yticklabels(self.agent_labels)
+        
+        # Create colorbars
+        # self.cross_cbar = self.fig.colorbar(self.cross_heatmaps[0], 
+        #                                   ax=self.ax_cross_attns, 
+        #                                   fraction=0.05, 
+        #                                   pad=0.04)
+        # self.landmark_cbar = self.fig.colorbar(self.landmark_heatmap,
+        #                                      ax=self.ax_landmark_attns,
+        #                                      fraction=0.05,
+        #                                      pad=0.04)
+        
+        self.cross_cbar.set_label('Attention Weight')
+        self.landmark_cbar.set_label('Attention Weight')
         
         self.step_title = self.fig.suptitle("Step: 0", fontsize=16)
         self.fig.tight_layout()
@@ -173,6 +195,7 @@ class AttentionAnimator:
     def update_animation(self, frame):
         self.step_title.set_text(f"Step: {frame}")
         
+        # Update positions
         agents_pos = self.agent_positions[frame]
         self.scatter_agents.set_offsets(agents_pos)
         self.scatter_agents.set_color(self.agent_colors)
@@ -180,17 +203,28 @@ class AttentionAnimator:
         for i, ann in enumerate(self.agent_annotations):
             ann.set_position(agents_pos[i])
         
+        # Update cross attention heatmaps with values
         cross_attn_data = self.cross_attentions[frame]
         for i, heatmap in enumerate(self.cross_heatmaps):
             agent_data = cross_attn_data[i]
             heatmap.set_array(agent_data)
+            
+            # Update text annotations
+            for j in range(self.n_landmarks):
+                for k in range(self.n_agents):
+                    self.ax_cross_attns[i].texts[j*self.n_agents + k].set_text(f"{agent_data[j,k]:.2f}")
         
+        # Update landmark attention heatmap with values
         landmark_attn_data = self.landmark_attentions[frame]
-        for i, heatmap in enumerate(self.landmark_heatmaps):
-            agent_data = landmark_attn_data[i]
-            heatmap.set_array(agent_data)
+        landmark_data = np.concatenate([x for x in landmark_attn_data])
+        self.landmark_heatmap.set_array(landmark_data)
         
-        return [self.scatter_agents, self.scatter_landmarks] + self.cross_heatmaps + self.landmark_heatmaps
+        # Update text annotations for landmark attention
+        for i in range(self.n_agents):
+            for j in range(self.n_landmarks):
+                self.ax_landmark_attns.texts[i*self.n_landmarks + j].set_text(f"{landmark_data[i,j]:.2f}")
+        
+        return [self.scatter_agents, self.scatter_landmarks] + self.cross_heatmaps + [self.landmark_heatmap]
     
     def create_animation(self, save_path):
         print("Collecting data for animation...")

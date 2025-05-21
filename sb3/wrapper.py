@@ -46,16 +46,15 @@ class VMASVecEnv(DummyVecEnv):
     
     def step(self, actions):
         actions = torch.from_numpy(actions).to(self.env.device).transpose(1, 0)
-        obs, rewards, truncated, terminated, _ = self.env.step(actions)
+        obs, rews, dones, infos = self.env.step(actions)
         infos = [{} for _ in range(self.num_envs)]
-        rewards = sum(rewards) / self.num_agents
+        rewards = sum(rews) / self.num_agents
         if self.rnd_nums:
             rnd_nums = torch.rand(self.num_envs, self.num_agents, device=self.env.device).unsqueeze(-1)
             obs = torch.stack(obs, dim=0).transpose(1, 0)
             obs = torch.cat([obs, rnd_nums], dim=-1)
         else:
             obs = torch.stack(obs, dim=0).transpose(1, 0)
-        dones = torch.logical_or(terminated, truncated)
         if dones.any():
             for i in range(self.num_envs):
                 infos[i]["terminal_observation"] = obs[i].cpu()
@@ -65,5 +64,5 @@ class VMASVecEnv(DummyVecEnv):
         else:        
             return obs.cpu().numpy(), rewards.cpu().numpy(), dones.cpu().numpy(), infos
     
-    def render(self, mode='human'):
-        return self.env.render(mode=mode)
+    def render(self, mode='human', agent_index_focus=None):
+        return self.env.render(mode=mode, agent_index_focus=agent_index_focus )
