@@ -59,7 +59,7 @@ class AttentionAnimator:
                 n_epochs=kwargs["n_epochs"],
                 max_grad_norm=kwargs["max_grad_norm"],
                 gamma=kwargs["gamma"],
-                n_steps=kwargs["n_steps"],
+                n_steps=self.max_steps,
             )
         self.model.load(path)
 
@@ -92,7 +92,7 @@ class AttentionAnimator:
             obs, rewards, dones, infos = self.env.step(action)
             
     
-    def create_mp4(self, path, fps=30, dpi=100):
+    def create_mp4(self, path, fps=10, dpi=100):
         # get att frames for heat map
         cross_att_frames = [[] for _ in range(self.n_agents)]
         for step_weights in self.cross_attention_weights:
@@ -100,11 +100,26 @@ class AttentionAnimator:
             for i in range(self.n_agents):
                 cross_att_frames[i].append(step_weights[i])
 
+        # only for simple_spread
+        if self.scenario == "simple_spread":
+            landmark_att_frames = [[] for _ in range(self.n_agents)]
+            for step_weights in self.landmark_weights:
+                # step_weights shape = (n_agents, 1, n_agents)
+                for i in range(self.n_agents):
+                    landmark_att_frames[i].append(step_weights[i])
+
+            # add landmark weights to cross attention weights
+            for i in range(self.n_agents):
+                cross_att_frames[i] = np.concatenate((cross_att_frames[i], landmark_att_frames[i]), axis=1)
+
+        n_cols = int(np.ceil(np.sqrt(self.n_agents)))
+        n_rows = int(np.ceil(self.n_agents / n_cols))
+
         # set up figure + GridSpec: left column for env, right columns for attention
         fig = plt.figure(figsize=(12, 8))
-        gs = gridspec.GridSpec(2, 3,
-                            width_ratios=[2, 1, 1],
-                            height_ratios=[1, 1],
+        gs = gridspec.GridSpec(n_rows, n_cols + 1,
+                            width_ratios=[2] + [1] * n_cols,
+                            height_ratios=[1] * n_rows,
                             wspace=0.3, hspace=0.3)
 
         ax_env = fig.add_subplot(gs[:, 0])
@@ -113,15 +128,15 @@ class AttentionAnimator:
 
         att_axes = []
         for idx in range(self.n_agents):
-            row = idx // 2
-            col = 1 + (idx % 2)
+            row = idx // n_cols
+            col = 1 + (idx % n_cols)
             ax = fig.add_subplot(gs[row, col])
             ax.set_title(f"Agent {idx} Attention")
             ax.axis("off")
             att_axes.append(ax)
 
         txt = fig.text(0.5, 0.95, "", ha="center", va="top",
-                    fontsize=14, color="white", fontweight="bold")
+                    fontsize=14, color="black", fontweight="bold")
 
         # set up the writer
         writer = FFMpegWriter(fps=fps, metadata=dict(artist="Me"), bitrate=1800)
@@ -147,6 +162,11 @@ class AttentionAnimator:
                         interpolation="nearest",
                         norm=Normalize(vmin=0, vmax=1)
                     )
+
+                    for (x, y), value in np.ndenumerate(heat):
+                        ax.text(
+                            y, x, f'{value:.2f}', ha='center', va='center', color='black', fontsize=6
+                        )
                     ax.set_title(f"Agent {i}")
 
                 # grab and write
@@ -163,14 +183,15 @@ if __name__ == "__main__":
         sim="vmas",
         env_idx=0,
         scenario="simple_spread",
-        n_agents=4,
+        n_agents=5,
         num_envs=40,
         continuous_actions=True,
-        max_steps=100,
+        max_steps=400,
         seed=42,
         device="cuda" if torch.cuda.is_available() else "cpu",
         terminated_truncated=False,
     )
+    #max step is gotten from env inside class, @rohan change if u want
     animator.attach_and_load_model(
         model_name="ppo",
         path="/Users/jmalegaonkar/Desktop/InfoMARL-1/sb3/ppo_infomarl.zip",
@@ -181,7 +202,6 @@ if __name__ == "__main__":
         n_epochs=10,
         max_grad_norm=10,
         gamma=0.99,
-        n_steps=100
     )
     animator.collect_data()
     animator.create_mp4("attention_animation.mp4")
