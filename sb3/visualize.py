@@ -11,6 +11,7 @@ from matplotlib import gridspec
 from matplotlib.colors import Normalize
 from matplotlib.animation import FFMpegWriter
 
+from tqdm import tqdm
 
 
 class AttentionAnimator:
@@ -50,23 +51,22 @@ class AttentionAnimator:
     
     def attach_and_load_model(self, model_name, path, **kwargs):
         if model_name == "ppo":
-            self.model = PPO(
-                policy=kwargs["policy"],
-                env=self.env,
-                device=kwargs["device"],
-                verbose=kwargs["verbose"],
-                batch_size=kwargs["batch_size"],
-                n_epochs=kwargs["n_epochs"],
-                max_grad_norm=kwargs["max_grad_norm"],
-                gamma=kwargs["gamma"],
-                n_steps=self.max_steps,
-            )
-        self.model.load(path)
-
+            self.model = PPO.load(path, **kwargs)
+            if self.model.policy.observation_space != self.env.observation_space:
+                self.model.policy.observation_space = self.env.observation_space
+                self.model.policy.action_space = self.env.action_space
+                self.model.policy.pi_features_extractor.actor.number_agents = self.env.num_agents
+                with torch.no_grad():
+                    self.model.policy.log_std = torch.nn.Parameter(
+                        torch.zeros(np.prod(self.env.action_space.shape), dtype=torch.float32)
+                    )
+        else:
+            raise ValueError(f"Model {model_name} not supported.")
 
     def collect_data(self):
+        print("Collecting data...")
         obs = self.env.reset()
-        for step in range(self.max_steps):
+        for step in tqdm(range(self.max_steps)):
             action, _ = self.model.predict(obs, deterministic=True)
             actor = self.model.policy.features_extractor.actor
             cross_attention_weights = actor.cross_attention_weights
@@ -93,6 +93,7 @@ class AttentionAnimator:
             
     
     def create_mp4(self, path, fps=10, dpi=100):
+        print(f"Creating mp4 file at {path}...")
         # get att frames for heat map
         cross_att_frames = [[] for _ in range(self.n_agents)]
         for step_weights in self.cross_attention_weights:
@@ -142,7 +143,7 @@ class AttentionAnimator:
         writer = FFMpegWriter(fps=fps, metadata=dict(artist="Me"), bitrate=1800)
         with writer.saving(fig, path, dpi):
             n_frames = len(self.env_frames)
-            for t in range(n_frames):
+            for t in tqdm(range(n_frames)):
                 # update env frame
                 ax_env.clear()
                 ax_env.axis("off")
@@ -172,8 +173,7 @@ class AttentionAnimator:
                 # grab and write
                 writer.grab_frame()
 
-        plt.close(fig)
-             
+        plt.close(fig)             
         
             
 
@@ -183,25 +183,18 @@ if __name__ == "__main__":
         sim="vmas",
         env_idx=0,
         scenario="simple_spread",
-        n_agents=5,
-        num_envs=40,
+        n_agents=8,
+        num_envs=2,
         continuous_actions=True,
-        max_steps=400,
+        max_steps=100,
         seed=42,
-        device="cuda" if torch.cuda.is_available() else "cpu",
+        device="cpu",
         terminated_truncated=False,
     )
-    #max step is gotten from env inside class, @rohan change if u want
     animator.attach_and_load_model(
         model_name="ppo",
-        path="/Users/jmalegaonkar/Desktop/InfoMARL-1/sb3/ppo_infomarl.zip",
-        policy=policy.InfoMARLActorCriticPolicy,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        verbose=1,
-        batch_size=400,
-        n_epochs=10,
-        max_grad_norm=10,
-        gamma=0.99,
+        path="ppo_high_ent.zip",
+        device="cpu",
     )
     animator.collect_data()
     animator.create_mp4("attention_animation.mp4")
