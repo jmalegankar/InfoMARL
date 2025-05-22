@@ -92,27 +92,64 @@ class AttentionAnimator:
             obs, rewards, dones, infos = self.env.step(action)
             
     
-    def create_mp4(self, path):
-        # Create figure once
-        fig = plt.figure(figsize=(10, 10))
-        ax = fig.add_subplot(111)
-        ax.axis("off")
-        ax.set_title(f"{self.scenario} Scenario")
+    def create_mp4(self, path, fps=30, dpi=100):
+        # get att frames for heat map
+        cross_att_frames = [[] for _ in range(self.n_agents)]
+        for step_weights in self.cross_attention_weights:
+            # step_weights shape = (n_agents, n_agents, n_agents)
+            for i in range(self.n_agents):
+                cross_att_frames[i].append(step_weights[i])
 
-        
-        writer = FFMpegWriter(fps=30, metadata=dict(artist="Me"), bitrate=1800)
+        # set up figure + GridSpec: left column for env, right columns for attention
+        fig = plt.figure(figsize=(12, 8))
+        gs = gridspec.GridSpec(2, 3,
+                            width_ratios=[2, 1, 1],
+                            height_ratios=[1, 1],
+                            wspace=0.3, hspace=0.3)
 
-        
-        with writer.saving(fig, path, 300): 
-            for frame_idx, frame in enumerate(self.env_frames):
-                ax.imshow(frame)
+        ax_env = fig.add_subplot(gs[:, 0])
+        ax_env.axis("off")
+        ax_env.set_title(f"{self.scenario} Scenario")
 
-                
-                ax.text(
-                    0.5, 1.02, f"Frame: {frame_idx + 1}", ha='center', va='bottom', 
-                    transform=ax.transAxes, fontsize=14, color='white', fontweight='bold'
-                )
+        att_axes = []
+        for idx in range(self.n_agents):
+            row = idx // 2
+            col = 1 + (idx % 2)
+            ax = fig.add_subplot(gs[row, col])
+            ax.set_title(f"Agent {idx} Attention")
+            ax.axis("off")
+            att_axes.append(ax)
 
+        txt = fig.text(0.5, 0.95, "", ha="center", va="top",
+                    fontsize=14, color="white", fontweight="bold")
+
+        # set up the writer
+        writer = FFMpegWriter(fps=fps, metadata=dict(artist="Me"), bitrate=1800)
+        with writer.saving(fig, path, dpi):
+            n_frames = len(self.env_frames)
+            for t in range(n_frames):
+                # update env frame
+                ax_env.clear()
+                ax_env.axis("off")
+                ax_env.set_title(f"{self.scenario} Scenario")
+                ax_env.imshow(self.env_frames[t])
+
+                # update counter
+                txt.set_text(f"Frame: {t+1}/{n_frames}")
+
+                # update each attention heatmap
+                for i, ax in enumerate(att_axes):
+                    ax.clear()
+                    ax.axis("off")
+                    heat = cross_att_frames[i][t]
+                    ax.imshow(
+                        heat,
+                        interpolation="nearest",
+                        norm=Normalize(vmin=0, vmax=1)
+                    )
+                    ax.set_title(f"Agent {i}")
+
+                # grab and write
                 writer.grab_frame()
 
         plt.close(fig)
@@ -120,9 +157,7 @@ class AttentionAnimator:
         
             
 
-if __name__ == "__main__":
-    # Example usage
-    
+if __name__ == "__main__":    
     animator = AttentionAnimator()
     animator.create_env(
         sim="vmas",
