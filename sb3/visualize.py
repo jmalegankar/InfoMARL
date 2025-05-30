@@ -183,7 +183,7 @@ if __name__ == "__main__":
         sim="vmas",
         env_idx=0,
         scenario="simple_spread",
-        n_agents=8,
+        n_agents=4,
         num_envs=2,
         continuous_actions=True,
         max_steps=100,
@@ -193,7 +193,7 @@ if __name__ == "__main__":
     )
     animator.attach_and_load_model(
         model_name="ppo",
-        path="ppo_high_ent.zip",
+        path="ppo_infomarl.zip",
         device="cpu",
     )
     animator.collect_data()
