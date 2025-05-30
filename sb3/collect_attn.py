@@ -153,8 +153,8 @@ class AttentionAnimator:
     def collect_data(self):
         obs = self.env.reset()
         
-        cur_pos_initial, _, landmarks_tensor, other_agents, _ = policy.env_parser_simple(
-            torch.tensor(obs[self.env_idx]), self.n_agents
+        cur_pos_initial, _, landmarks_tensor, other_agents, _ = policy.env_parser_food(
+            torch.tensor(obs[self.env_idx]), self.n_agents, 4
         )
         
         if landmarks_tensor.dim() > 2:
@@ -255,14 +255,20 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     env = vmas.make_env(
-        scenario="simple_spread",
+        scenario="food_collection",
         n_agents=4,
-        num_envs=40,
+        n_food=4,
+        num_envs=64,
         continuous_actions=True,
-        max_steps=400,
+        max_steps=200,
         seed=42,
         device=device,
-        terminated_truncated=True,
+        terminated_truncated=False,
+        # Scenario specific parameters
+        collection_radius=0.15,
+        respawn_food=True,
+        sparse_reward=False,
+        obs_agents=True,
     )
 
     env = wrapper.VMASVecEnv(env, rnd_nums=True)
@@ -272,13 +278,17 @@ if __name__ == "__main__":
         env=env,
         device=device,
         verbose=1,
-        batch_size=400,
+        batch_size=1024,
         n_epochs=10,
+        gamma=0.99,
+        n_steps=160,
+        vf_coef=0.5,
+        target_kl=0.25,
         max_grad_norm=10.0,
-        gamma=0.95,
-        n_steps=100,
+        learning_rate=1e-4,
     )
-    model_path = "/Users/jmalegaonkar/Desktop/InfoMARL-1/sb3/ppo_infomarl.zip"
+    
+    model_path = "/Users/jmalegaonkar/Desktop/InfoMARL-1/sb3/twst.zip"
     model.load(model_path)
 
     model = fix_attention_masks(model)

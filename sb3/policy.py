@@ -127,7 +127,7 @@ class RandomAgentPolicy(nn.Module):
         # Encode landmarks
         landmark_embeddings = self.landmark_embedding(
             landmarks.view(-1, 2)
-        ).view(-1, self.number_agents, self.hidden_dim)
+        ).view(-1, self.number_food, self.hidden_dim)
 
         # Encode all agents
         all_agents_embeddings = self.all_agent_embedding(
@@ -142,7 +142,7 @@ class RandomAgentPolicy(nn.Module):
             query=landmark_embeddings,
             key=all_agents_embeddings,
             value=all_agents_embeddings,
-            attn_mask=agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1),
+            attn_mask=agents_mask.unsqueeze(-2).repeat(1, self.number_food, 1),
             need_weights=(not self.training),
         )
 
@@ -150,7 +150,7 @@ class RandomAgentPolicy(nn.Module):
 
         landmark_value = self.landmark_value(
             landmarks.view(-1, 2)
-        ).view(-1, self.number_agents, self.hidden_dim)
+        ).view(-1, self.number_food, self.hidden_dim)
 
         landmark_value = torch.cat((landmark_value, attention_output), dim=-1)
 
