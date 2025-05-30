@@ -17,7 +17,7 @@ def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs,
     permuted_rand = torch.gather(expanded_rand, dim=2, index=permutation_indices.unsqueeze(0).expand(num_envs, -1, -1))
     return permuted_rand
 
-def env_parser(obs:torch.Tensor, number_agents:int):
+def env_parser_simple(obs:torch.Tensor, number_agents:int):
     random_numbers = obs[..., -1]
     obs = obs.view(-1, obs.shape[-1])
     cur_pos = obs[: ,0:2]
@@ -32,10 +32,39 @@ def env_parser(obs:torch.Tensor, number_agents:int):
     else:
         return cur_pos, cur_vel, landmarks.contiguous().reshape(-1, number_agents, 2), other_agents.contiguous().reshape(-1, (number_agents - 1), 2), random_numbers
 
+
+def env_parser_food(obs: torch.Tensor, number_agents: int, number_food: int):
+    """
+    Parse observations from food collection environment.
+    
+    Observation structure per agent:
+    - Agent position (2)
+    - Agent velocity (2)
+    - Food relative positions (number_food * 2)
+    - Other agents relative positions (number_agents - 1) * 2
+    - Other agents relative velocities (number_agents - 1) * 2
+    - Random number (1) if using rnd_nums wrapper
+    """
+    random_numbers = obs[..., -1]
+    obs = obs.view(-1, obs.shape[-1])
+    cur_pos = obs[:, 0:2]
+    cur_vel = obs[:, 2:4]
+    landmarks = obs[:, 4:4 + number_food * 2].contiguous().view(-1, number_food, 2)
+    other_agents = obs[:, 4 + number_food * 2:-1].contiguous().view(-1, (number_agents - 1), 2)
+    
+    if number_agents == 1:
+        landmarks = landmarks.unsqueeze(-2)
+        other_agents = other_agents.unsqueeze(-2)
+        num_envs = cur_pos.shape[0]
+        return cur_pos.view(num_envs, 2), cur_vel.view(num_envs, 2), landmarks.contiguous(), other_agents.contiguous().view(num_envs, 0, 2), random_numbers
+    else:
+        return cur_pos, cur_vel, landmarks, other_agents, random_numbers
+
 class RandomAgentPolicy(nn.Module):
-    def __init__(self, number_agents, agent_dim, landmark_dim, hidden_dim):
+    def __init__(self, number_agents, number_food, agent_dim, landmark_dim, hidden_dim):
         super().__init__()
         self.number_agents = number_agents
+        self.number_food = number_food
         self.agent_dim = agent_dim
         self.landmark_dim = landmark_dim
         self.hidden_dim = hidden_dim
@@ -85,7 +114,7 @@ class RandomAgentPolicy(nn.Module):
 
     def forward(self, obs):
         """Extract features from observations using the attention mechanism"""
-        cur_pos, cur_vel, landmarks, other_agents, random_numbers = env_parser(obs, self.number_agents)
+        cur_pos, cur_vel, landmarks, other_agents, random_numbers = env_parser_food(obs, self.number_agents, self.number_food)
         random_numbers = get_permuted_env_random_numbers(
             random_numbers, self.number_agents, obs.shape[0], cur_pos.device
         ).view(-1, self.number_agents)
@@ -98,7 +127,7 @@ class RandomAgentPolicy(nn.Module):
         # Encode landmarks
         landmark_embeddings = self.landmark_embedding(
             landmarks.view(-1, 2)
-        ).view(-1, self.number_agents, self.hidden_dim)
+        ).view(-1, self.number_food, self.hidden_dim)
 
         # Encode all agents
         all_agents_embeddings = self.all_agent_embedding(
@@ -113,7 +142,7 @@ class RandomAgentPolicy(nn.Module):
             query=landmark_embeddings,
             key=all_agents_embeddings,
             value=all_agents_embeddings,
-            attn_mask=agents_mask.unsqueeze(-2).repeat(1, self.number_agents, 1),
+            attn_mask=agents_mask.unsqueeze(-2).repeat(1, self.number_food, 1),
             need_weights=(not self.training),
         )
 
@@ -121,7 +150,7 @@ class RandomAgentPolicy(nn.Module):
 
         landmark_value = self.landmark_value(
             landmarks.view(-1, 2)
-        ).view(-1, self.number_agents, self.hidden_dim)
+        ).view(-1, self.number_food, self.hidden_dim)
 
         landmark_value = torch.cat((landmark_value, attention_output), dim=-1)
 
@@ -179,6 +208,7 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
     ):
         super(InfoMARLExtractor, self).__init__(observation_space, hidden_dim*2)
         self.n_agents = observation_space.shape[0]
+        self.food = (observation_space.shape[1] - 4 - (self.n_agents -1) * 2 - 1)//2 # 4 for agent position and velocity, n_agents*2 for other agents' positions, 1 for random number
         if critic:
             self.critic = CriticPolicy(
                 obs_size=self.n_agents*(observation_space.shape[-1]-1),
@@ -187,6 +217,7 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
         else:
             self.actor = RandomAgentPolicy(
                 number_agents=self.n_agents,
+                number_food=self.food,
                 agent_dim=agent_dim,
                 landmark_dim=landmark_dim,
                 hidden_dim=hidden_dim,

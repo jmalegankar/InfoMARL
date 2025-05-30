@@ -1,3 +1,5 @@
+#paste into vmas lib
+
 import policy
 import vmas
 import wrapper
@@ -10,17 +12,30 @@ import os
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 env = vmas.make_env(
-    scenario="simple_spread",
+    scenario="food_collection",
     n_agents=4,
+    n_food=8,
     num_envs=64,
     continuous_actions=True,
-    max_steps=400,
+    max_steps=200,
     seed=42,
     device=device,
-    terminated_truncated=True,
+    terminated_truncated=False,
+    # Scenario specific parameters
+    collection_radius=0.15,
+    respawn_food=True,
+    sparse_reward=False,
+    obs_agents=True,
 )
-
 env = wrapper.VMASVecEnv(env, rnd_nums=True)
+
+# print("Environment created with device:", device)
+# print("Number of environments:", env.num_envs)
+# print("Observation space:", env.observation_space)
+# print("Action space:", env.action_space)
+
+
+
 
 if os.path.exists("ppo_infomarl.zip"):
     print("Loading existing model...")
