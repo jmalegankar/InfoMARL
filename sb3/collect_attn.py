@@ -153,7 +153,7 @@ class AttentionAnimator:
     def collect_data(self):
         obs = self.env.reset()
         
-        cur_pos_initial, _, landmarks_tensor, other_agents, _ = policy.env_parser(
+        cur_pos_initial, _, landmarks_tensor, other_agents, _ = policy.env_parser_simple(
             torch.tensor(obs[self.env_idx]), self.n_agents
         )
         
@@ -180,7 +180,7 @@ class AttentionAnimator:
             self.cross_attentions.append(cross_attn_np)
             self.landmark_attentions.append(landmark_attn_np)
             
-            cur_pos, _, _, _, _ = policy.env_parser(
+            cur_pos, _, _, _, _ = policy.env_parser_simple(
                 torch.tensor(obs[self.env_idx]), self.n_agents
             )
             cur_pos_np = cur_pos.cpu().numpy()
