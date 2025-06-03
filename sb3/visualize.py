@@ -183,7 +183,7 @@ if __name__ == "__main__":
         sim="vmas",
         env_idx=0,
         scenario="simple_spread",
-        n_agents=4,
+        n_agents=12,
         num_envs=2,
         continuous_actions=True,
         max_steps=100,
