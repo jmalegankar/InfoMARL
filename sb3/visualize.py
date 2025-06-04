@@ -28,16 +28,29 @@ class AttentionAnimator:
     
     def create_env(self, sim, env_idx, **kwargs):
         if sim == "vmas":
-            env = vmas.make_env(
-                scenario=kwargs["scenario"],
-                n_agents=kwargs["n_agents"],
-                num_envs=kwargs["num_envs"],
-                continuous_actions=kwargs["continuous_actions"],
-                max_steps=kwargs["max_steps"],
-                seed=kwargs["seed"],
-                device=kwargs["device"],
-                terminated_truncated=kwargs["terminated_truncated"],
-            )
+            if kwargs["scenario"] == "food_collection":
+                env = vmas.make_env(
+                    scenario=kwargs["scenario"],
+                    n_agents=kwargs["n_agents"],
+                    n_food=kwargs["n_food"],
+                    num_envs=kwargs["num_envs"],
+                    continuous_actions=kwargs["continuous_actions"],
+                    max_steps=kwargs["max_steps"],
+                    seed=kwargs["seed"],
+                    device=kwargs["device"],
+                    terminated_truncated=kwargs["terminated_truncated"],
+                )
+            else:
+                env = vmas.make_env(
+                    scenario=kwargs["scenario"],
+                    n_agents=kwargs["n_agents"],
+                    num_envs=kwargs["num_envs"],
+                    continuous_actions=kwargs["continuous_actions"],
+                    max_steps=kwargs["max_steps"],
+                    seed=kwargs["seed"],
+                    device=kwargs["device"],
+                    terminated_truncated=kwargs["terminated_truncated"],
+                )
             env = wrapper.VMASVecEnv(env, rnd_nums=True)
             self.env = env
             self.env_idx = env_idx
@@ -46,7 +59,8 @@ class AttentionAnimator:
             self.n_agents = kwargs["n_agents"]
             self.num_envs = kwargs["num_envs"]
             self.landmark_weights = []
-            
+            if self.scenario == "food_collection":
+                self.n_food = kwargs["n_food"]
             
     
     def attach_and_load_model(self, model_name, path, **kwargs):
@@ -112,6 +126,18 @@ class AttentionAnimator:
             # add landmark weights to cross attention weights
             for i in range(self.n_agents):
                 cross_att_frames[i] = np.concatenate((cross_att_frames[i], landmark_att_frames[i]), axis=1)
+        
+        if self.scenario == "food_collection":
+            # for food collection, we need to add food attention weights
+            food_att_frames = [[] for _ in range(self.n_agents)]
+            for step_weights in self.cross_attention_weights:
+                # step_weights shape = (n_agents, n_agents, n_food)
+                for i in range(self.n_agents):
+                    food_att_frames[i].append(step_weights[i])
+
+            # add food weights to cross attention weights
+            for i in range(self.n_agents):
+                cross_att_frames[i] = np.concatenate((cross_att_frames[i], food_att_frames[i]), axis=1)
 
         n_cols = int(np.ceil(np.sqrt(self.n_agents)))
         n_rows = int(np.ceil(self.n_agents / n_cols))
@@ -182,14 +208,16 @@ if __name__ == "__main__":
     animator.create_env(
         sim="vmas",
         env_idx=0,
-        scenario="simple_spread",
-        n_agents=12,
+        scenario="food_collection",
+        n_agents=4,
+        n_food=4,
         num_envs=2,
         continuous_actions=True,
-        max_steps=100,
-        seed=0,
+        max_steps=200,
+        seed=42,
         device="cpu",
         terminated_truncated=False,
+        
     )
     animator.attach_and_load_model(
         model_name="ppo",
