@@ -44,16 +44,17 @@ def env_parser_food(obs: torch.Tensor, number_agents: int, number_food: int):
     obs = obs.view(-1, obs.shape[-1])
     cur_pos = obs[:, 0:2]
     cur_vel = obs[:, 2:4]
-    landmarks = obs[:, 4:4 + number_food * 2].contiguous().view(-1, number_food, 2)
+    food = obs[:, 4:4 + number_food * 2].contiguous().view(-1, number_food, 2)
     other_agents = obs[:, 4 + number_food * 2:-1].contiguous().view(-1, (number_agents - 1), 2)
-    
+    food_mask = (food == -999.0).any(dim=-1)
+
     if number_agents == 1:
-        landmarks = landmarks.unsqueeze(-2)
+        food = food.unsqueeze(-2)
         other_agents = other_agents.unsqueeze(-2)
         num_envs = cur_pos.shape[0]
-        return cur_pos.view(num_envs, 2), cur_vel.view(num_envs, 2), landmarks.contiguous(), other_agents.contiguous().view(num_envs, 0, 2), random_numbers
+        return cur_pos.view(num_envs, 2), cur_vel.view(num_envs, 2), food.contiguous(), other_agents.contiguous().view(num_envs, 0, 2), random_numbers, food_mask
     else:
-        return cur_pos, cur_vel, landmarks, other_agents, random_numbers
+        return cur_pos, cur_vel, food, other_agents, random_numbers, food_mask
 
 
 class RandomAgentPolicy(nn.Module):
@@ -108,11 +109,12 @@ class RandomAgentPolicy(nn.Module):
 
     def forward(self, obs):
         """Extract features from observations using the attention mechanism"""
-        
-        cur_pos, cur_vel, landmarks, other_agents, random_numbers = env_parser_food(obs, self.number_agents, self.number_food)
+        cur_pos, cur_vel, landmarks, other_agents, random_numbers, food_mask = env_parser_food(obs, self.number_agents, self.number_food)
+
         random_numbers = get_permuted_env_random_numbers(
             random_numbers, self.number_agents, obs.shape[0], cur_pos.device
         ).view(-1, self.number_agents)
+
         cur_agent = torch.cat((cur_pos, cur_vel), dim=-1)
         all_agents_list = torch.cat((cur_pos.unsqueeze(1), other_agents), dim=1)
 
@@ -122,20 +124,22 @@ class RandomAgentPolicy(nn.Module):
         # Encode landmarks
         landmark_embeddings = self.landmark_embedding(
             landmarks.view(-1, 2)
-        ).view(-1, self.number_agents, self.hidden_dim)
-
+        ).view(-1, self.number_food, self.hidden_dim)
+        
         # Encode all agents
         all_agents_embeddings = self.all_agent_embedding(
             all_agents_list.view(-1, 2)
         ).view(-1, self.number_agents, self.hidden_dim)
-
         # Create attention mask for cross attention
         agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1, 1))
+        food_mask = food_mask.unsqueeze(-1)
 
         landmark_emb, agent_emb, cross_weights = self.agent_landmark(
             all_agents_embeddings,
             landmark_embeddings,
             agents_mask,
+            mask=food_mask.repeat(1, 1, self.number_agents)
+            
         )
         
         if not self.training:
@@ -144,6 +148,7 @@ class RandomAgentPolicy(nn.Module):
         landmark_emb, _, landmark_weights = self.cur_landmark(
             landmark_embeddings,
             cur_agent_embeddings.unsqueeze(1),
+            mask  = food_mask.transpose(2, 1)
         )
 
         if not self.training:
@@ -153,6 +158,7 @@ class RandomAgentPolicy(nn.Module):
             agent_emb,
             cur_agent_embeddings.unsqueeze(1),
             agents_mask,
+
         )
 
         # Concatenate features for final processing
@@ -196,7 +202,7 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
     ):
         super(InfoMARLExtractor, self).__init__(observation_space, hidden_dim*2)
         self.n_agents = observation_space.shape[0]
-        self.n_food = 
+        self.n_food = (observation_space.shape[1] - ((self.n_agents - 1) * 2) - 5) // 2
         if critic:
             self.critic = CriticPolicy(
                 obs_size=self.n_agents*(observation_space.shape[-1]-1),
@@ -205,6 +211,7 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
         else:
             self.actor = RandomAgentPolicy(
                 number_agents=self.n_agents,
+                number_food=self.n_food,
                 agent_dim=agent_dim,
                 landmark_dim=landmark_dim,
                 hidden_dim=hidden_dim,

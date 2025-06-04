@@ -10,17 +10,21 @@ import os
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 env = vmas.make_env(
-    scenario="simple_spread",
+    scenario="food_collection",
+    n_food=8,
     n_agents=4,
-    num_envs=64,
+    num_envs=2,
     continuous_actions=True,
     max_steps=400,
     seed=42,
     device=device,
     terminated_truncated=False,
+    respawn_food=True,
 )
 
 env = wrapper.VMASVecEnv(env, rnd_nums=True)
+obs = env.reset()
+print(obs[0][0].shape)  # Check the shape of the observation
 
 if os.path.exists("ppo_infomarl.zip"):
     print("Loading existing model...")
@@ -33,8 +37,8 @@ else:
         env=env,
         device=device,
         verbose=1,
-        batch_size=1024,
-        n_epochs=10,
+        batch_size=2,
+        n_epochs=2,
         gamma=0.99,
         n_steps=160,
         vf_coef=0.5,

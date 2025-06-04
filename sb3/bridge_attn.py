@@ -33,7 +33,7 @@ class BridgeAttention(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
         )
     
-    def forward(self, agent_emb, task_emb, key_mask=None):
+    def forward(self, agent_emb, task_emb, key_mask=None, mask=None):
         """
         agent_emb: (batch_size, num_agents, hidden_dim)
         task_emb: (batch_size, num_tasks, hidden_dim)
@@ -46,6 +46,7 @@ class BridgeAttention(nn.Module):
             agent_emb,
             agent_emb,
             key_padding_mask=key_mask,
+            attn_mask=mask,
             need_weights=True,
         ) # ( batch_size, num_tasks, hidden_dim ), ( batch_size, num_tasks, num_agents )
 
