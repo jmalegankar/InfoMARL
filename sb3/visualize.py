@@ -70,6 +70,8 @@ class AttentionAnimator:
                 self.model.policy.observation_space = self.env.observation_space
                 self.model.policy.action_space = self.env.action_space
                 self.model.policy.pi_features_extractor.actor.number_agents = self.env.num_agents
+                self.model.policy.pi_features_extractor.actor.number_food = self.n_food
+
                 with torch.no_grad():
                     self.model.policy.log_std = torch.nn.Parameter(
                         torch.zeros(np.prod(self.env.action_space.shape), dtype=torch.float32)
@@ -84,7 +86,7 @@ class AttentionAnimator:
             action, _ = self.model.predict(obs, deterministic=True)
             actor = self.model.policy.features_extractor.actor
             cross_attention_weights = actor.cross_attention_weights
-            cross_attention_weights = cross_attention_weights.view(self.num_envs, self.n_agents, self.n_agents, self.n_agents)
+            cross_attention_weights = cross_attention_weights.view(self.num_envs, self.n_agents, self.n_food, self.n_agents)
             cross_attention_weights = cross_attention_weights[self.env_idx].cpu().numpy()
 
             frame = self.env.render(
@@ -217,14 +219,16 @@ if __name__ == "__main__":
         seed=42,
         device="cpu",
         terminated_truncated=False,
-        respawn_food=False,
+        respawn_food=True,
         collection_radius=0.15,
         
     )
+
     animator.attach_and_load_model(
         model_name="ppo",
         path="ppo_infomarl.zip",
         device="cpu",
     )
+        
     animator.collect_data()
     animator.create_mp4("attention_animation.mp4")
