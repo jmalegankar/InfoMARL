@@ -11,7 +11,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 env = vmas.make_env(
     scenario="food_collection",
-    n_food=8,
+    n_food=4,
     n_agents=4,
     num_envs=2,
     continuous_actions=True,

@@ -215,12 +215,12 @@ if __name__ == "__main__":
         n_food=8,
         num_envs=2,
         continuous_actions=True,
-        max_steps=200,
+        max_steps=100,
         seed=42,
         device="cpu",
         terminated_truncated=False,
         respawn_food=True,
-        collection_radius=0.15,
+        collection_radius=0.05,
         
     )
 
