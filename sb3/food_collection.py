@@ -9,8 +9,8 @@ class Scenario(BaseScenario):
         num_agents = kwargs.pop("n_agents", 3)
         num_food = kwargs.pop("n_food", 5)
         obs_agents = kwargs.pop("obs_agents", True)
-        collection_radius = kwargs.pop("collection_radius", 0.15)
-        respawn_food = kwargs.pop("respawn_food", False)  # Default to False for your use case
+        collection_radius = kwargs.pop("collection_radius", 0.05)
+        respawn_food = kwargs.pop("respawn_food", True)
         ScenarioUtils.check_kwargs_consumed(kwargs)
 
         self.obs_agents = obs_agents
@@ -59,7 +59,6 @@ class Scenario(BaseScenario):
         return world
 
     def reset_world_at(self, env_index: int = None):
-        # Reset agents
         for agent in self.world.agents:
             agent.set_pos(
                 torch.zeros(
@@ -71,8 +70,8 @@ class Scenario(BaseScenario):
                     device=self.world.device,
                     dtype=torch.float32,
                 ).uniform_(
-                    -1.0,
-                    1.0,
+                    -2.0,
+                    2.0,
                 ),
                 batch_index=env_index,
             )
@@ -101,7 +100,7 @@ class Scenario(BaseScenario):
                 ),
                 device=self.world.device,
                 dtype=torch.float32,
-            ).uniform_(-1.0, 1.0)
+            ).uniform_(-2.0, 2.0)
             
             food.set_pos(new_pos, batch_index=env_index)
             
@@ -146,42 +145,42 @@ class Scenario(BaseScenario):
                             self.rew += newly_collected.float() * 1.0
                             
                             # Handle collected food
-                            if self.respawn_food:
-                                # Respawn food at new random location
-                                new_pos = torch.zeros(
-                                    (self.world.batch_dim, self.world.dim_p),
-                                    device=self.world.device,
-                                    dtype=torch.float32,
-                                ).uniform_(-1.0, 1.0)
-                                
-                                # Only update position in environments where food was collected
-                                current_pos = food.state.pos.clone()
-                                current_pos[newly_collected] = new_pos[newly_collected]
-                                food.set_pos(current_pos, batch_index=None)
-                                
-                                # Reset collection status for respawned food
-                                self.food_collected[newly_collected, i] = False
-                            else:
-                                # For non-respawning food, move it completely out of bounds
-                                # This ensures it won't be rendered
-                                far_pos = torch.full(
-                                    (self.world.batch_dim, self.world.dim_p),
-                                    100.0,  # Far outside any reasonable render bounds
-                                    device=self.world.device,
-                                    dtype=torch.float32,
-                                )
-                                current_pos = food.state.pos.clone()
-                                current_pos[newly_collected] = far_pos[newly_collected]
-                                food.set_pos(current_pos, batch_index=None)
+                            # if self.respawn_food:
+                            # Respawn food at new random location
+                            new_pos = torch.zeros(
+                                (self.world.batch_dim, self.world.dim_p),
+                                device=self.world.device,
+                                dtype=torch.float32,
+                            ).uniform_(-1.0, 1.0)
+                            
+                            # Only update position in environments where food was collected
+                            current_pos = food.state.pos.clone()
+                            current_pos[newly_collected] = new_pos[newly_collected]
+                            food.set_pos(current_pos, batch_index=None)
+                            
+                            # Reset collection status for respawned food
+                            self.food_collected[newly_collected, i] = False
+                            # else:
+                            #     # For non-respawning food, move it completely out of bounds
+                            #     # This ensures it won't be rendered
+                            #     far_pos = torch.full(
+                            #         (self.world.batch_dim, self.world.dim_p),
+                            #         100.0,  # Far outside any reasonable render bounds
+                            #         device=self.world.device,
+                            #         dtype=torch.float32,
+                            #     )
+                            #     current_pos = food.state.pos.clone()
+                            #     current_pos[newly_collected] = far_pos[newly_collected]
+                            #     food.set_pos(current_pos, batch_index=None)
             
             # Check if all food is collected (game end condition)
-            if not self.respawn_food:
-                all_collected = self.food_collected.all(dim=1)
-                newly_done = all_collected & ~self.game_done
-                if newly_done.any():
-                    # Give bonus reward for collecting all food
-                    self.rew += newly_done.float() * 5.0
-                    self.game_done |= newly_done
+            # if not self.respawn_food:
+            #     all_collected = self.food_collected.all(dim=1)
+            #     newly_done = all_collected & ~self.game_done
+            #     if newly_done.any():
+            #         # Give bonus reward for collecting all food
+            #         self.rew += newly_done.float() * 5.0
+            #         self.game_done |= newly_done
             
             # Add collision penalties
             for a in self.world.agents:
@@ -208,12 +207,12 @@ class Scenario(BaseScenario):
             
             # Only include food that hasn't been collected
             # This maintains a fixed observation size but marks collected food
-            collected_mask = self.food_collected[:, i].unsqueeze(-1)
-            rel_pos = torch.where(
-                collected_mask,
-                torch.full_like(rel_pos, -999.0),  # Special marker for collected food
-                rel_pos
-            )
+            # collected_mask = self.food_collected[:, i].unsqueeze(-1)
+            # rel_pos = torch.where(
+            #     collected_mask,
+            #     torch.full_like(rel_pos, -999.0),  # Special marker for collected food
+            #     rel_pos
+            # )
             observations.append(rel_pos)
         
         # Add relative positions of other agents
@@ -225,7 +224,6 @@ class Scenario(BaseScenario):
         return torch.cat(observations, dim=-1)
 
     def info(self, agent: Agent) -> dict:
-        """Return info dictionary with collection statistics."""
         return {
             "total_food_collected": self.total_food_collected,
             "food_collected_mask": self.food_collected,
@@ -234,7 +232,6 @@ class Scenario(BaseScenario):
         }
 
     def done(self):
-        """Check if episode is done (all food collected when not respawning)."""
         if not self.respawn_food:
             return self.game_done
         else:
@@ -248,6 +245,6 @@ if __name__ == "__main__":
         control_two_agents=True,
         n_agents=4,
         n_food=8,
-        respawn_food=False,  # Set to False so game ends when all food collected
+        respawn_food=True,  # Set to False so game ends when all food collected
         collection_radius=0.15,  # Adjust this to control how close agents need to be
     )
