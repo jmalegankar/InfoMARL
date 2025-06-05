@@ -212,7 +212,7 @@ if __name__ == "__main__":
         env_idx=0,
         scenario="food_collection",
         n_agents=4,
-        n_food=8,
+        n_food=4,
         num_envs=2,
         continuous_actions=True,
         max_steps=100,
@@ -220,7 +220,7 @@ if __name__ == "__main__":
         device="cpu",
         terminated_truncated=False,
         respawn_food=True,
-        collection_radius=0.05,
+        collection_radius=0.15,
         
     )
 
