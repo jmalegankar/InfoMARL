@@ -70,8 +70,8 @@ class Scenario(BaseScenario):
                     device=self.world.device,
                     dtype=torch.float32,
                 ).uniform_(
-                    -2.0,
-                    2.0,
+                    -1.0,
+                    1.0,
                 ),
                 batch_index=env_index,
             )
@@ -100,7 +100,7 @@ class Scenario(BaseScenario):
                 ),
                 device=self.world.device,
                 dtype=torch.float32,
-            ).uniform_(-2.0, 2.0)
+            ).uniform_(-1.0, 1.0)
             
             food.set_pos(new_pos, batch_index=env_index)
             
@@ -126,62 +126,53 @@ class Scenario(BaseScenario):
             )
             
             # Check food collection for all agents
-            for i, food in enumerate(self.world.landmarks):
-                if not self.food_collected[:, i].all():  # Only check if food not already collected
-                    for a in self.world.agents:
-                        dist_to_food = torch.linalg.vector_norm(
-                            a.state.pos - food.state.pos, dim=1
-                        )
+            for a in self.world.agents:
+                for i, food in enumerate(self.world.landmarks):
+                    dist_to_food = torch.linalg.vector_norm(
+                        a.state.pos - food.state.pos, dim=1
+                    )
+
+                    closest = torch.min(
+                        torch.stack(
+                            [
+                                torch.linalg.vector_norm(
+                                    a.state.pos - food.state.pos, dim=1
+                                )
+                                for a in self.world.agents
+                            ],
+                            dim=-1,
+                        ),
+                        dim=-1,
+                    )[0]
+                    self.rew -= closest
+
+                    # Check which environments have collected this food
+                    newly_collected = (dist_to_food < self.collection_radius)
+                    
+                    if newly_collected.any():
+                        # Mark food as collected in those environments
+                        self.food_collected[:, i] |= newly_collected
+                        self.total_food_collected += newly_collected.long()
                         
-                        # Check which environments have collected this food
-                        newly_collected = (dist_to_food < self.collection_radius) & ~self.food_collected[:, i]
+                        # Give reward for collection
+                        self.rew += newly_collected.float() * 20.0
                         
-                        if newly_collected.any():
-                            # Mark food as collected in those environments
-                            self.food_collected[:, i] |= newly_collected
-                            self.total_food_collected += newly_collected.long()
-                            
-                            # Give reward for collection
-                            self.rew += newly_collected.float() * 1.0
-                            
-                            # Handle collected food
-                            # if self.respawn_food:
-                            # Respawn food at new random location
-                            new_pos = torch.zeros(
-                                (self.world.batch_dim, self.world.dim_p),
-                                device=self.world.device,
-                                dtype=torch.float32,
-                            ).uniform_(-1.0, 1.0)
-                            
-                            # Only update position in environments where food was collected
-                            current_pos = food.state.pos.clone()
-                            current_pos[newly_collected] = new_pos[newly_collected]
-                            food.set_pos(current_pos, batch_index=None)
-                            
-                            # Reset collection status for respawned food
-                            self.food_collected[newly_collected, i] = False
-                            # else:
-                            #     # For non-respawning food, move it completely out of bounds
-                            #     # This ensures it won't be rendered
-                            #     far_pos = torch.full(
-                            #         (self.world.batch_dim, self.world.dim_p),
-                            #         100.0,  # Far outside any reasonable render bounds
-                            #         device=self.world.device,
-                            #         dtype=torch.float32,
-                            #     )
-                            #     current_pos = food.state.pos.clone()
-                            #     current_pos[newly_collected] = far_pos[newly_collected]
-                            #     food.set_pos(current_pos, batch_index=None)
-            
-            # Check if all food is collected (game end condition)
-            # if not self.respawn_food:
-            #     all_collected = self.food_collected.all(dim=1)
-            #     newly_done = all_collected & ~self.game_done
-            #     if newly_done.any():
-            #         # Give bonus reward for collecting all food
-            #         self.rew += newly_done.float() * 5.0
-            #         self.game_done |= newly_done
-            
+                        # Handle collected food
+                        # if self.respawn_food:
+                        # Respawn food at new random location
+                        new_pos = torch.zeros(
+                            (self.world.batch_dim, self.world.dim_p),
+                            device=self.world.device,
+                            dtype=torch.float32,
+                        ).uniform_(-1.0, 1.0)
+                        
+                        # Only update position in environments where food was collected
+                        current_pos = food.state.pos.clone()
+                        current_pos[newly_collected] = new_pos[newly_collected]
+                        food.set_pos(current_pos, batch_index=None)
+                        
+                        # Reset collection status for respawned food
+                        self.food_collected[newly_collected, i] = False
             # Add collision penalties
             for a in self.world.agents:
                 if a.collide:

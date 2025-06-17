@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import warnings
 
-from bridge_attn import BridgeAttention
+from bridge_attn import DiamondAttention
 
 def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs, device):
     """
@@ -44,8 +44,8 @@ def env_parser_food(obs: torch.Tensor, number_agents: int, number_food: int):
     obs = obs.view(-1, obs.shape[-1])
     cur_pos = obs[:, 0:2]
     cur_vel = obs[:, 2:4]
-    food = obs[:, 4:4 + number_food * 2].contiguous().view(-1, number_food, 2) + cur_pos.unsqueeze(1)
-    other_agents = obs[:, 4 + number_food * 2:-1].contiguous().view(-1, (number_agents - 1), 2) + cur_pos.unsqueeze(1)
+    food = obs[:, 4:4 + number_food * 2].contiguous().view(-1, number_food, 2)
+    other_agents = obs[:, 4 + number_food * 2:-1].contiguous().view(-1, (number_agents - 1), 2)
     food_mask = (food == -999.0).any(dim=-1)
 
     if number_agents == 1:
@@ -88,20 +88,20 @@ class RandomAgentPolicy(nn.Module):
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
 
-        # Bridge attention mechanism for cross attention
-        self.agent_landmark = BridgeAttention(
+        # Diamond attention mechanism for cross attention
+        self.agent_landmark = DiamondAttention(
             hidden_dim=self.hidden_dim,
             num_heads=1,
             dropout=0.0,
         )
 
-        self.cur_agent = BridgeAttention(
+        self.cur_agent = DiamondAttention(
             hidden_dim=self.hidden_dim,
             num_heads=1,
             dropout=0.0,
         )
 
-        self.cur_landmark = BridgeAttention(
+        self.cur_landmark = DiamondAttention(
             hidden_dim=self.hidden_dim,
             num_heads=1,
             dropout=0.0,
@@ -134,28 +134,37 @@ class RandomAgentPolicy(nn.Module):
         agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1, 1))
         food_mask = food_mask.unsqueeze(-1)
 
-        landmark_emb, agent_emb, cross_weights = self.agent_landmark(
+        agent_emb, landmark_emb, cross_weights = self.agent_landmark(
+            landmark_embeddings,
             all_agents_embeddings,
             landmark_embeddings,
-            agents_mask,
+            all_agents_embeddings,
+            key_mask=agents_mask,
         )
         
         if not self.training:
             self.cross_attention_weights = cross_weights
+        else:
+            del cross_weights
 
-        landmark_emb, _, landmark_weights = self.cur_landmark(
+        _, landmark_emb, landmark_weights = self.cur_landmark(
+            cur_agent_embeddings.unsqueeze(1),
+            landmark_embeddings,
             landmark_embeddings,
             cur_agent_embeddings.unsqueeze(1),
         )
 
         if not self.training:
             self.landmark_attention_weights = landmark_weights
+        else:
+            del landmark_weights
 
-        cur_agent_embeddings, _, _ = self.cur_agent(
+        _, cur_agent_embeddings, _ = self.cur_agent(
+            cur_agent_embeddings.unsqueeze(1),
+            agent_emb,
             agent_emb,
             cur_agent_embeddings.unsqueeze(1),
-            agents_mask,
-
+            key_mask=agents_mask,
         )
 
         # Concatenate features for final processing

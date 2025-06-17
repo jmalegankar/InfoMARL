@@ -129,17 +129,17 @@ class AttentionAnimator:
             for i in range(self.n_agents):
                 cross_att_frames[i] = np.concatenate((cross_att_frames[i], landmark_att_frames[i]), axis=1)
         
-        if self.scenario == "food_collection":
-            # for food collection, we need to add food attention weights
-            food_att_frames = [[] for _ in range(self.n_agents)]
-            for step_weights in self.cross_attention_weights:
-                # step_weights shape = (n_agents, n_agents, n_food)
-                for i in range(self.n_agents):
-                    food_att_frames[i].append(step_weights[i])
+        # if self.scenario == "food_collection":
+        #     # for food collection, we need to add food attention weights
+        #     food_att_frames = [[] for _ in range(self.n_agents)]
+        #     for step_weights in self.cross_attention_weights:
+        #         # step_weights shape = (n_agents, n_agents, n_food)
+        #         for i in range(self.n_agents):
+        #             food_att_frames[i].append(step_weights[i])
 
-            # add food weights to cross attention weights
-            for i in range(self.n_agents):
-                cross_att_frames[i] = np.concatenate((cross_att_frames[i], food_att_frames[i]), axis=1)
+        #     # add food weights to cross attention weights
+        #     for i in range(self.n_agents):
+        #         cross_att_frames[i] = np.concatenate((cross_att_frames[i], food_att_frames[i]), axis=1)
 
         n_cols = int(np.ceil(np.sqrt(self.n_agents)))
         n_rows = int(np.ceil(self.n_agents / n_cols))
