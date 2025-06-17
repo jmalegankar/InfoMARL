@@ -42,7 +42,7 @@ def env_parser_food(obs: torch.Tensor, number_agents: int, number_food: int):
     """
     random_numbers = obs[..., -1]
     obs = obs.view(-1, obs.shape[-1])
-    cur_pos = obs[:, 0:2]
+    cur_pos = torch.zeros_like(obs[:, 0:2])
     cur_vel = obs[:, 2:4]
     food = obs[:, 4:4 + number_food * 2].contiguous().view(-1, number_food, 2)
     other_agents = obs[:, 4 + number_food * 2:-1].contiguous().view(-1, (number_agents - 1), 2)
@@ -150,8 +150,8 @@ class RandomAgentPolicy(nn.Module):
         _, landmark_emb, landmark_weights = self.cur_landmark(
             cur_agent_embeddings.unsqueeze(1),
             landmark_embeddings,
-            landmark_embeddings,
             cur_agent_embeddings.unsqueeze(1),
+            landmark_embeddings,
         )
 
         if not self.training:
@@ -162,8 +162,8 @@ class RandomAgentPolicy(nn.Module):
         _, cur_agent_embeddings, _ = self.cur_agent(
             cur_agent_embeddings.unsqueeze(1),
             agent_emb,
-            agent_emb,
             cur_agent_embeddings.unsqueeze(1),
+            agent_emb,
             key_mask=agents_mask,
         )
 

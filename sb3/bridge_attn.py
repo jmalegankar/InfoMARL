@@ -15,9 +15,16 @@ class DiamondAttention(nn.Module):
 
         self.lvalue_projection = nn.Linear(hidden_dim, hidden_dim)
 
-        self.left_residual = nn.Linear(hidden_dim*2, hidden_dim)
-        self.right_residual = nn.Linear(hidden_dim*2, hidden_dim)
-        self.activation = nn.SiLU()
+        self.left_residual = nn.Sequential(
+            nn.Linear(hidden_dim*2, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+        self.right_residual = nn.Sequential(
+            nn.Linear(hidden_dim*2, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
     
     def forward(self, query: torch.Tensor, key: torch.Tensor, lvalue: torch.Tensor, rvalue: torch.Tensor, attn_mask=None, key_mask=None):
         """
@@ -41,8 +48,6 @@ class DiamondAttention(nn.Module):
         attn_left = self.left_residual(attn_left)
         attn_right = torch.cat((attn_right, lvalue), dim=-1)
         attn_right = self.right_residual(attn_right)
-        attn_left = self.activation(attn_left)
-        attn_right = self.activation(attn_right)
 
         return attn_left, attn_right, weights
 
