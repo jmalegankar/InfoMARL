@@ -32,8 +32,9 @@ if flag == "qmix":
         print("Creating new QMix model...")
         model = QMixVMAS(
             env=env,
-            lr=1e-4,  # Same as your PPO
+            lr=1e-4,
             gamma=0.99,
+            batch_size=1024,
             device=device
         )
 elif flag == "ppo":
