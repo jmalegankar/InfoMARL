@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import warnings
 
-from bridge_attn import BridgeAttention
+from bridge_attn import DiamondAttention
 
 def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs, device):
     """
@@ -19,19 +19,26 @@ def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs,
     permuted_rand = torch.gather(expanded_rand, dim=2, index=permutation_indices.unsqueeze(0).expand(num_envs, -1, -1))
     return permuted_rand
 
-def env_parser(obs:torch.Tensor, number_agents:int):
+def env_parser(obs:torch.Tensor, num_good:int, num_adversaries:int):
     random_numbers = obs[..., -1]
-    obs = obs.view(-1, obs.shape[-1])
-    cur_pos = obs[: ,0:2]
-    cur_vel = obs[: ,2:4]
-    landmarks = obs[:, 4:4 + 2 * number_agents].contiguous().reshape(-1, number_agents, 2) + cur_pos.unsqueeze(1)
-    other_agents = obs[:, 4 + 2 * number_agents:-1].contiguous().reshape(-1, (number_agents - 1), 2) + cur_pos.unsqueeze(1)
-    return cur_pos, cur_vel, landmarks, other_agents, random_numbers
+    adv_rnd = random_numbers[..., :num_adversaries]
+    good_rnd = random_numbers[..., num_adversaries:num_adversaries+num_good]
+    obs = obs.view(-1, num_adversaries+num_good, obs.shape[-1])
+    cur_pos = obs[: ,:, 0:2]
+    cur_vel = obs[: ,:, 2:4]
+    lmsize = obs.shape[-1] - 2 * (num_adversaries + num_good - 1)
+    landmarks = obs[:, :, 4:lmsize].reshape(-1, num_good+num_adversaries, 2)
+    oth_adv = obs[:, :num_adversaries, lmsize:lmsize+2*num_adversaries-2].reshape(-1, num_adversaries, 2)
+    goods = obs[:, :num_adversaries, lmsize+2*num_adversaries-2:].reshape(-1, num_adversaries, 2)
+    advs = obs[:, num_adversaries:, lmsize:lmsize+2*num_adversaries].reshape(-1, num_good, 2)
+    oth_good = obs[:, num_adversaries:, lmsize+2*num_adversaries:].reshape(-1, num_good, 2)
+    return cur_pos, cur_vel, landmarks, oth_adv, goods, advs, oth_good, adv_rnd, good_rnd
 
 class RandomAgentPolicy(nn.Module):
-    def __init__(self, number_agents, agent_dim, landmark_dim, hidden_dim):
+    def __init__(self, num_good, num_adversaries, agent_dim, landmark_dim, hidden_dim):
         super().__init__()
-        self.number_agents = number_agents
+        self.num_good = num_good
+        self.num_adversaries = num_adversaries
         self.agent_dim = agent_dim
         self.landmark_dim = landmark_dim
         self.hidden_dim = hidden_dim
@@ -50,20 +57,77 @@ class RandomAgentPolicy(nn.Module):
             nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
-       
-        # Network for processing all agents' positions
-        self.all_agent_embedding = nn.Sequential(
+
+        self.oth_adv_embedding = nn.Sequential(
             nn.Linear(self.agent_dim, self.hidden_dim),
             nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
 
-        # Bridge attention mechanism for cross attention
-        self.agent_landmark = BridgeAttention(
+        self.good_embedding = nn.Sequential(
+            nn.Linear(self.agent_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+        )
+
+        self.adv_embedding = nn.Sequential(
+            nn.Linear(self.agent_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+        )
+
+        self.oth_good_embedding = nn.Sequential(
+            nn.Linear(self.agent_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+        )
+
+        # Attention mechanism for data mixing
+        self.adv_good_lmk = nn.MultiheadAttention(
+            embed_dim=self.hidden_dim,
+            num_heads=1,
+            dropout=0.0,
+            batch_first=True,
+        )
+        self.adv_good_lmk_mixer = nn.Sequential(
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+        )
+
+        self.good_adv = nn.MultiheadAttention(
+            embed_dim=self.hidden_dim,
+            num_heads=1,
+            dropout=0.0,
+            batch_first=True,
+        )
+
+        self.good_adv_mixer = nn.Sequential(
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+        )
+       
+        # Diamond attention mechanism for cross attention
+        self.good_landmark = DiamondAttention(
             hidden_dim=self.hidden_dim,
             num_heads=1,
             dropout=0.0,
         )
+
+        self.good_adversary = DiamondAttention(
+            hidden_dim=self.hidden_dim,
+            num_heads=1,
+            dropout=0.0,
+        )
+
+        self.adversary_landmark = DiamondAttention(
+            hidden_dim=self.hidden_dim,
+            num_heads=1,
+            dropout=0.0,
+        )
+
+        
 
         self.cur_agent = BridgeAttention(
             hidden_dim=self.hidden_dim,
@@ -79,28 +143,75 @@ class RandomAgentPolicy(nn.Module):
 
     def forward(self, obs):
         """Extract features from observations using the attention mechanism"""
-        cur_pos, cur_vel, landmarks, other_agents, random_numbers = env_parser(obs, self.number_agents)
-        random_numbers = get_permuted_env_random_numbers(
-            random_numbers, self.number_agents, obs.shape[0], cur_pos.device
-        ).view(-1, self.number_agents)
-        cur_agent = torch.cat((cur_pos, cur_vel), dim=-1)
-        all_agents_list = torch.cat((cur_pos.unsqueeze(1), other_agents), dim=1)
+        cur_pos, cur_vel, landmarks, oth_adv, goods, advs, oth_good, adv_rnd, good_rnd = env_parser(
+            obs, self.num_good, self.num_adversaries
+        )
 
+        adv_rnd = get_permuted_env_random_numbers(
+            adv_rnd, self.num_adversaries, obs.shape[0], obs.device
+        )
+
+        good_rnd = get_permuted_env_random_numbers(
+            good_rnd, self.num_good, obs.shape[0], obs.device
+        )
+
+        cur_agent = torch.cat((cur_pos, cur_vel), dim=-1)
         # Encode current agent
         cur_agent_embeddings = self.cur_agent_embedding(cur_agent)
         
         # Encode landmarks
-        landmark_embeddings = self.landmark_embedding(
-            landmarks.view(-1, 2)
-        ).view(-1, self.number_agents, self.hidden_dim)
+        landmark_embeddings = self.landmark_embedding(landmarks)
 
-        # Encode all agents
-        all_agents_embeddings = self.all_agent_embedding(
-            all_agents_list.view(-1, 2)
-        ).view(-1, self.number_agents, self.hidden_dim)
+        # Encode other agents
+        oth_adv = torch.cat((cur_pos[:, :self.num_adversaries, :], oth_adv), dim=-2)
+        oth_adv_embeddings = self.oth_adv_embedding(oth_adv)
+
+        # Encode goods
+        goods_embeddings = self.good_embedding(goods)
+
+        # Encode adversaries
+        advs_embeddings = self.adv_embedding(advs)
+
+        # Encode other goods
+        oth_good = torch.cat((cur_pos[:, self.num_adversaries:, :], oth_good), dim=-2)
+        oth_good_embeddings = self.oth_good_embedding(oth_good)
 
         # Create attention mask for cross attention
-        agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1, 1))
+        good_mask = ~(good_rnd >= good_rnd[:, 0].view(-1, 1))
+        adv_mask = ~(adv_rnd >= adv_rnd[:, 0].view(-1, 1))
+
+        goods_lmk, _ = self.adv_good_lmk(goods_embeddings, landmark_embeddings, landmark_embeddings)
+        goods_lmk = self.adv_good_lmk_mixer(
+            torch.cat((goods_lmk, goods_embeddings), dim=-1)
+        )
+
+        adv_good_emb, adv_emb, adv_good_weights = self.good_adversary(
+            goods_lmk,
+            advs_embeddings,
+            goods_lmk,
+            advs_embeddings,
+            key_mask=adv_mask,
+        )
+
+        good_adv, _ = self.good_adv(
+            oth_good_embeddings,
+            oth_adv_embeddings,
+            oth_adv_embeddings,
+        )
+        good_adv = self.good_adv_mixer(
+            torch.cat((good_adv, oth_good_embeddings), dim=-1)
+        )
+
+        landmark_emb, good_emb, good_lmk_weights = self.good_landmark(
+            landmark_embeddings,
+            good_adv,
+            landmark_embeddings,
+            good_adv,
+            key_mask=good_mask,
+        )
+
+        if not self.training:
+            self.cross_attention_weights = (adv_good_weights, good_lmk_weights)
 
         landmark_emb, agent_emb, cross_weights = self.agent_landmark(
             all_agents_embeddings,
@@ -108,8 +219,6 @@ class RandomAgentPolicy(nn.Module):
             agents_mask,
         )
         
-        if not self.training:
-            self.cross_attention_weights = cross_weights
 
         landmark_emb, _, landmark_weights = self.cur_landmark(
             landmark_embeddings,
@@ -162,10 +271,14 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
         agent_dim=2,
         landmark_dim=2,
         hidden_dim=64,
+        num_good=1,
+        num_adversaries=1,
         critic=False,
     ):
         super(InfoMARLExtractor, self).__init__(observation_space, hidden_dim*2)
-        self.n_agents = observation_space.shape[0]
+        self.num_good = num_good
+        self.num_adversaries = num_adversaries
+        self.n_agents = num_good + num_adversaries
         if critic:
             self.critic = CriticPolicy(
                 obs_size=self.n_agents*(observation_space.shape[-1]-1),
@@ -213,6 +326,8 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
         normalize_images: bool = True,
         optimizer_class = torch.optim.Adam,
         optimizer_kwargs = None,
+        num_good: int = 1,
+        num_adversaries = 1,
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
@@ -277,10 +392,16 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
         self.use_sde = use_sde
         self.dist_kwargs = dist_kwargs
 
+        self.num_good = num_good
+        self.num_adversaries = num_adversaries
+
         # Action distribution
         self.action_dist = make_proba_distribution(
             action_space, self.log_std_init, self.dist_kwargs
         )
+
+        # Update log_prob method of the distribution to flip the sign for adversaries
+
 
         self._build(lr_schedule)
     
