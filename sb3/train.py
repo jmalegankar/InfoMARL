@@ -10,8 +10,7 @@ import os
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 env = vmas.make_env(
-    scenario="simple_spread",
-    n_agents=4,
+    scenario="grassland",
     num_envs=64,
     continuous_actions=True,
     max_steps=400,
@@ -41,6 +40,12 @@ else:
         target_kl=0.25,
         max_grad_norm=10.0,
         learning_rate=1e-4,
+        policy_kwargs={
+            'features_extractor_kwargs': {
+                'num_good': 5,
+                'num_adversaries': 3,
+            },
+        }
     )
 
 while True:

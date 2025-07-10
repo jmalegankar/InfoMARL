@@ -9,8 +9,8 @@ from vmas.simulator.utils import Color
 
 class Scenario(BaseScenario):
     def make_world(self, batch_dim: int, device: torch.device, **kwargs):
-        self.num_good = kwargs.get("n_agents_good", 4)
-        self.num_adversaries = kwargs.get("n_agents_adversaries", 4)
+        self.num_good = kwargs.get("n_agents_good", 5)
+        self.num_adversaries = kwargs.get("n_agents_adversaries", 3)
         self.num_agents = self.num_adversaries + self.num_good
         self.obs_agents = kwargs.get("obs_agents", True)
         self.ratio = kwargs.get("ratio", 2)  # ratio = 3, 4, 5
