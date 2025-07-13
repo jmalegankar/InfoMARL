@@ -482,7 +482,8 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
             log_prob = self.action_dist.distribution.log_prob(actions)
             if self.num_adversaries > 0:
                 # Flip the sign for adversaries
-                log_prob[:, :self.num_adversaries*2] *= -1
+                with torch.no_grad():
+                    log_prob[:, :self.num_adversaries*2] *= -1
             return log_prob.sum(dim=-1)
         
         self.action_dist.log_prob = new_log_prob
