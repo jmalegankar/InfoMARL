@@ -402,8 +402,6 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
         normalize_images: bool = True,
         optimizer_class = torch.optim.Adam,
         optimizer_kwargs = None,
-        num_good: int = 1,
-        num_adversaries = 1,
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
@@ -468,9 +466,6 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
         self.use_sde = use_sde
         self.dist_kwargs = dist_kwargs
 
-        self.num_good = num_good
-        self.num_adversaries = num_adversaries
-
         # Action distribution
         self.action_dist = make_proba_distribution(
             action_space, self.log_std_init, self.dist_kwargs
@@ -480,10 +475,14 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
 
         def new_log_prob(actions):
             log_prob = self.action_dist.distribution.log_prob(actions)
-            if self.num_adversaries > 0:
+            num_adversaries = self.features_extractor_kwargs.get('num_adversaries', 0)
+            print(log_prob[0])
+            if num_adversaries > 0:
                 # Flip the sign for adversaries
                 with torch.no_grad():
-                    log_prob[:, :self.num_adversaries*2] *= -1
+                    log_prob[:, :num_adversaries*2] *= -1
+            print(log_prob[0])
+            exit()
             return log_prob.sum(dim=-1)
         
         self.action_dist.log_prob = new_log_prob
