@@ -13,7 +13,7 @@ class Scenario(BaseScenario):
         self.num_adversaries = kwargs.get("n_agents_adversaries", 3)
         self.num_agents = self.num_adversaries + self.num_good
         self.obs_agents = kwargs.get("obs_agents", True)
-        self.ratio = kwargs.get("ratio", 2)  # ratio = 3, 4, 5
+        self.ratio = kwargs.get("ratio", 3)  # ratio = 3, 4, 5
         self.device = device
         self.collection_radius = kwargs.get("collection_radius", 0.05)
 

@@ -18,10 +18,7 @@ class AttentionAnimator:
     def __init__(self):
         self.env = None
         self.model = None
-        self.adversary_attention_weights = []  
-        self.good_attention_weights = []    
         self.landmark_weights = None
-        self.env_frames = []
         self.scenario = None
         self.max_steps = None
         self.n_agents = None
@@ -67,9 +64,8 @@ class AttentionAnimator:
             raise ValueError(f"Model {model_name} not supported.")
 
     def collect_data(self):
-        print("Collecting data...")
         obs = self.env.reset()
-        for step in tqdm(range(self.max_steps)):
+        for step in range(self.max_steps):
             action, _ = self.model.predict(obs, deterministic=True)
             actor = self.model.policy.features_extractor.actor
             
@@ -90,30 +86,16 @@ class AttentionAnimator:
                 mode="rgb_array",
                 agent_index_focus=None
             )
-
-            self.env_frames.append(frame)
-            self.adversary_attention_weights.append(adv_attention)
-            self.good_attention_weights.append(good_attention)
             
             # take a step in the environment
-            obs, rewards, dones, infos = self.env.step(action)
+            obs, _, _, _ = self.env.step(action)
+
+            yield frame, adv_attention, good_attention
             
     
     def create_mp4(self, path, fps=10, dpi=100):
+        data_collector = self.collect_data()
         print(f"Creating mp4 file at {path}...")
-        # get att frames for heat map
-        adv_att_frames = [[] for _ in range(self.num_adversaries)]
-        good_att_frames = [[] for _ in range(self.num_good)]
-
-        # Convert adv agent attention weights to frames
-        for step_weights in self.adversary_attention_weights:
-            for i in range(self.num_adversaries):
-                adv_att_frames[i].append(step_weights[i])
-        
-        # Convert good agent attention weights to frames
-        for step_weights in self.good_attention_weights:
-            for i in range(self.num_good):
-                good_att_frames[i].append(step_weights[i])
 
         max_agents_per_row = 4
 
@@ -174,22 +156,22 @@ class AttentionAnimator:
         # Set up the writer
         writer = FFMpegWriter(fps=fps, metadata=dict(artist="Me"), bitrate=1800)
         with writer.saving(fig, path, dpi):
-            n_frames = len(self.env_frames)
-            for t in tqdm(range(n_frames)):
+            for t in tqdm(range(self.max_steps)):
+                frame, adv_attention, good_attention = next(data_collector)
                 # Update environment frame
                 ax_env.clear()
                 ax_env.axis("off")
                 ax_env.set_title(f"{self.scenario} Scenario", fontsize=14, fontweight='bold')
-                ax_env.imshow(self.env_frames[t])
+                ax_env.imshow(frame)
 
                 # Update frame counter
-                txt.set_text(f"Frame: {t+1}/{n_frames}")
+                txt.set_text(f"Frame: {t+1}/{self.max_steps}")
 
                 # Update adversary attention heatmaps
                 for i, ax in enumerate(adv_axes):
                     ax.clear()
                     ax.axis("off")
-                    heat = adv_att_frames[i][t]
+                    heat = adv_attention[i]
                     
                     im = ax.imshow(
                         heat,
@@ -212,7 +194,7 @@ class AttentionAnimator:
                 for i, ax in enumerate(good_axes):
                     ax.clear()
                     ax.axis("off")
-                    heat = good_att_frames[i][t]
+                    heat = good_attention[i]
                     
                     im = ax.imshow(
                         heat,
@@ -257,5 +239,4 @@ if __name__ == "__main__":
         path="ppo_infomarl.zip",
         device="cpu",
     )
-    animator.collect_data()
     animator.create_mp4("grassland_attention_animation.mp4")
