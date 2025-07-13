@@ -18,7 +18,8 @@ class AttentionAnimator:
     def __init__(self):
         self.env = None
         self.model = None
-        self.cross_attention_weights = []
+        self.adversary_attention_weights = []  
+        self.good_attention_weights = []    
         self.landmark_weights = None
         self.env_frames = []
         self.scenario = None
@@ -30,23 +31,24 @@ class AttentionAnimator:
         if sim == "vmas":
             env = vmas.make_env(
                 scenario=kwargs["scenario"],
-                n_agents=kwargs["n_agents"],
                 num_envs=kwargs["num_envs"],
                 continuous_actions=kwargs["continuous_actions"],
                 max_steps=kwargs["max_steps"],
                 seed=kwargs["seed"],
                 device=kwargs["device"],
                 terminated_truncated=kwargs["terminated_truncated"],
+                n_agents_good=kwargs.get("n_agents_good", 5),
+                n_agents_adversaries=kwargs.get("n_agents_adversaries", 3),
             )
             env = wrapper.VMASVecEnv(env, rnd_nums=True)
             self.env = env
             self.env_idx = env_idx
             self.scenario = kwargs["scenario"]
             self.max_steps = kwargs["max_steps"]
-            self.n_agents = kwargs["n_agents"]
             self.num_envs = kwargs["num_envs"]
-            self.landmark_weights = []
-            
+            self.num_adversaries = kwargs.get("n_agents_adversaries", 3)
+            self.num_good = kwargs.get("n_agents_good", 5)
+            self.n_agents = self.num_adversaries + self.num_good
             
     
     def attach_and_load_model(self, model_name, path, **kwargs):
@@ -55,7 +57,8 @@ class AttentionAnimator:
             if self.model.policy.observation_space != self.env.observation_space:
                 self.model.policy.observation_space = self.env.observation_space
                 self.model.policy.action_space = self.env.action_space
-                self.model.policy.pi_features_extractor.actor.number_agents = self.env.num_agents
+                self.model.policy.pi_features_extractor.actor.num_adversaries = self.num_adversaries
+                self.model.policy.pi_features_extractor.actor.num_good = self.num_good
                 with torch.no_grad():
                     self.model.policy.log_std = torch.nn.Parameter(
                         torch.zeros(np.prod(self.env.action_space.shape), dtype=torch.float32)
@@ -69,9 +72,19 @@ class AttentionAnimator:
         for step in tqdm(range(self.max_steps)):
             action, _ = self.model.predict(obs, deterministic=True)
             actor = self.model.policy.features_extractor.actor
-            cross_attention_weights = actor.cross_attention_weights
-            cross_attention_weights = cross_attention_weights.view(self.num_envs, self.n_agents, self.n_agents, self.n_agents)
-            cross_attention_weights = cross_attention_weights[self.env_idx].cpu().numpy()
+            
+            adv_good_weights, good_lmk_weights = actor.cross_attention_weights
+
+            # print(f"adv_good_weights shape: {adv_good_weights.shape}")
+            # print(f"good_lmk_weights shape: {good_lmk_weights.shape}")
+
+            adv_attention = adv_good_weights.view(self.num_envs, self.num_adversaries, self.num_good, self.num_adversaries)
+            adv_attention = adv_attention[self.env_idx].cpu().numpy()  # Shape: [num_adversaries, num_good, num_adversaries]
+            
+            
+            good_attention = good_lmk_weights.view(self.num_envs, self.num_good, good_lmk_weights.shape[1], good_lmk_weights.shape[2])
+            good_attention = good_attention[self.env_idx].cpu().numpy()  # Shape: [num_good, seq_len, num_landmarks]
+
 
             frame = self.env.render(
                 mode="rgb_array",
@@ -79,14 +92,8 @@ class AttentionAnimator:
             )
 
             self.env_frames.append(frame)
-            self.cross_attention_weights.append(cross_attention_weights)
-
-            if self.scenario == "simple_spread":
-                #do same for landmark weights(landmarks are same as number of agents)
-                landmark_weights = actor.landmark_attention_weights
-                landmark_weights = landmark_weights.view(self.num_envs, self.n_agents, 1, self.n_agents)
-                landmark_weights = landmark_weights[self.env_idx].cpu().numpy()
-                self.landmark_weights.append(landmark_weights)
+            self.adversary_attention_weights.append(adv_attention)
+            self.good_attention_weights.append(good_attention)
             
             # take a step in the environment
             obs, rewards, dones, infos = self.env.step(action)
@@ -95,86 +102,139 @@ class AttentionAnimator:
     def create_mp4(self, path, fps=10, dpi=100):
         print(f"Creating mp4 file at {path}...")
         # get att frames for heat map
-        cross_att_frames = [[] for _ in range(self.n_agents)]
-        for step_weights in self.cross_attention_weights:
-            # step_weights shape = (n_agents, n_agents, n_agents)
-            for i in range(self.n_agents):
-                cross_att_frames[i].append(step_weights[i])
+        adv_att_frames = [[] for _ in range(self.num_adversaries)]
+        good_att_frames = [[] for _ in range(self.num_good)]
 
-        # only for simple_spread
-        if self.scenario == "simple_spread":
-            landmark_att_frames = [[] for _ in range(self.n_agents)]
-            for step_weights in self.landmark_weights:
-                # step_weights shape = (n_agents, 1, n_agents)
-                for i in range(self.n_agents):
-                    landmark_att_frames[i].append(step_weights[i])
+        # Convert adv agent attention weights to frames
+        for step_weights in self.adversary_attention_weights:
+            for i in range(self.num_adversaries):
+                adv_att_frames[i].append(step_weights[i])
+        
+        # Convert good agent attention weights to frames
+        for step_weights in self.good_attention_weights:
+            for i in range(self.num_good):
+                good_att_frames[i].append(step_weights[i])
 
-            # add landmark weights to cross attention weights
-            for i in range(self.n_agents):
-                cross_att_frames[i] = np.concatenate((cross_att_frames[i], landmark_att_frames[i]), axis=1)
+        max_agents_per_row = 4
 
-        n_cols = int(np.ceil(np.sqrt(self.n_agents)))
-        n_rows = int(np.ceil(self.n_agents / n_cols))
+        adv_rows = int(np.ceil(self.num_adversaries / max_agents_per_row)) if self.num_adversaries > 0 else 0
+        good_rows = int(np.ceil(self.num_good / max_agents_per_row)) if self.num_good > 0 else 0
+        
+        
+        total_rows = max(1, adv_rows + 1 + good_rows)
+        total_cols = max_agents_per_row + 1
 
-        # set up figure + GridSpec: left column for env, right columns for attention
-        fig = plt.figure(figsize=(12, 8))
-        gs = gridspec.GridSpec(n_rows, n_cols + 1,
-                            width_ratios=[2] + [1] * n_cols,
-                            height_ratios=[1] * n_rows,
-                            wspace=0.3, hspace=0.3)
+        print(f"Layout: adv_rows={adv_rows}, good_rows={good_rows}, total_rows={total_rows}, total_cols={total_cols}")
 
+        fig = plt.figure(figsize=(18, 12))  
+        gs = gridspec.GridSpec(total_rows, total_cols,
+                            width_ratios=[4] + [1] * max_agents_per_row, 
+                            height_ratios=[1] * total_rows,
+                            wspace=0.3, hspace=0.4)
+
+        # Environment subplot (spans multiple rows)
         ax_env = fig.add_subplot(gs[:, 0])
         ax_env.axis("off")
-        ax_env.set_title(f"{self.scenario} Scenario")
+        ax_env.set_title(f"{self.scenario} Scenario", fontsize=14, fontweight='bold')
 
-        att_axes = []
-        for idx in range(self.n_agents):
-            row = idx // n_cols
-            col = 1 + (idx % n_cols)
+        # Adversary attention subplots
+        adv_axes = []
+        for idx in range(self.num_adversaries):
+            row = idx // max_agents_per_row
+            col = 1 + (idx % max_agents_per_row)
             ax = fig.add_subplot(gs[row, col])
-            ax.set_title(f"Agent {idx} Attention")
+            ax.set_title(f"Predator {idx}", fontsize=10, color='red')
             ax.axis("off")
-            att_axes.append(ax)
+            adv_axes.append(ax)
+        
 
+        if self.num_adversaries > 0:
+            fig.text(0.75, 0.85, "Predator Attention to Prey", ha="center", va="center",
+                    fontsize=12, fontweight="bold", color="red")
+
+        # Good agent attention subplots  
+        good_axes = []
+        good_start_row = adv_rows + 1  # Start after adversary section + spacer
+        for idx in range(self.num_good):
+            row = good_start_row + (idx // max_agents_per_row)
+            col = 1 + (idx % max_agents_per_row)
+            ax = fig.add_subplot(gs[row, col])
+            ax.set_title(f"Prey {idx}", fontsize=10, color='blue')
+            ax.axis("off")
+            good_axes.append(ax)
+            
+        if self.num_good > 0:
+            fig.text(0.75, 0.45, "Prey Attention to Food", ha="center", va="center",
+                    fontsize=12, fontweight="bold", color="blue")
+
+        # Frame counter
         txt = fig.text(0.5, 0.95, "", ha="center", va="top",
                     fontsize=14, color="black", fontweight="bold")
 
-        # set up the writer
+        # Set up the writer
         writer = FFMpegWriter(fps=fps, metadata=dict(artist="Me"), bitrate=1800)
         with writer.saving(fig, path, dpi):
             n_frames = len(self.env_frames)
             for t in tqdm(range(n_frames)):
-                # update env frame
+                # Update environment frame
                 ax_env.clear()
                 ax_env.axis("off")
-                ax_env.set_title(f"{self.scenario} Scenario")
+                ax_env.set_title(f"{self.scenario} Scenario", fontsize=14, fontweight='bold')
                 ax_env.imshow(self.env_frames[t])
 
-                # update counter
+                # Update frame counter
                 txt.set_text(f"Frame: {t+1}/{n_frames}")
 
-                # update each attention heatmap
-                for i, ax in enumerate(att_axes):
+                # Update adversary attention heatmaps
+                for i, ax in enumerate(adv_axes):
                     ax.clear()
                     ax.axis("off")
-                    heat = cross_att_frames[i][t]
-                    ax.imshow(
+                    heat = adv_att_frames[i][t]
+                    
+                    im = ax.imshow(
                         heat,
                         interpolation="nearest",
-                        norm=Normalize(vmin=0, vmax=1)
+                        norm=Normalize(vmin=0, vmax=1),
+                        cmap='Reds'
                     )
 
                     for (x, y), value in np.ndenumerate(heat):
                         ax.text(
-                            y, x, f'{value:.2f}', ha='center', va='center', color='black', fontsize=6
+                            y, x, f'{value:.2f}', ha='center', va='center', 
+                            color='white' if value > 0.5 else 'black', fontsize=8
                         )
-                    ax.set_title(f"Agent {i}")
+                    ax.set_title(f"Predator {i}", fontsize=10, color='red')
+                    ax.set_xlabel("Adversaries", fontsize=8)
+                    ax.set_ylabel("Prey Agents", fontsize=8)
 
-                # grab and write
+
+                # Update good agent attention heatmaps
+                for i, ax in enumerate(good_axes):
+                    ax.clear()
+                    ax.axis("off")
+                    heat = good_att_frames[i][t]
+                    
+                    im = ax.imshow(
+                        heat,
+                        interpolation="nearest", 
+                        norm=Normalize(vmin=0, vmax=1),
+                        cmap='Blues'
+                    )
+
+                    # Add text annotations
+                    for (x, y), value in np.ndenumerate(heat):
+                        ax.text(
+                            y, x, f'{value:.2f}', ha='center', va='center',
+                            color='white' if value > 0.5 else 'black', fontsize=8
+                        )
+                    ax.set_title(f"Prey {i}", fontsize=10, color='blue')
+                    ax.set_xlabel("Landmarks", fontsize=8)
+                    ax.set_ylabel("Sequence Position", fontsize=8)
+
+                # Grab and write frame
                 writer.grab_frame()
 
-        plt.close(fig)             
-        
+        plt.close(fig)
             
 
 if __name__ == "__main__":    
@@ -182,11 +242,12 @@ if __name__ == "__main__":
     animator.create_env(
         sim="vmas",
         env_idx=0,
-        scenario="simple_spread",
-        n_agents=12,
+        scenario="grassland",
+        n_agents_good=5,
+        n_agents_adversaries=3,
         num_envs=2,
         continuous_actions=True,
-        max_steps=100,
+        max_steps=400,
         seed=0,
         device="cpu",
         terminated_truncated=False,
@@ -197,4 +258,4 @@ if __name__ == "__main__":
         device="cpu",
     )
     animator.collect_data()
-    animator.create_mp4("attention_animation.mp4")
+    animator.create_mp4("grassland_attention_animation.mp4")
