@@ -383,6 +383,7 @@ from stable_baselines3.common.distributions import (
     make_proba_distribution,
 )
 
+
 class InfoMARLActorCriticPolicy(ActorCriticPolicy):
     def __init__(
         self,
@@ -472,17 +473,23 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
         )
 
         # Update log_prob method of the distribution to flip the sign for adversaries
+        num_adversaries = self.features_extractor_kwargs.get('num_adversaries', 0)
+        class SignFlipFunction(torch.autograd.Function):
+            @staticmethod
+            def forward(ctx, input_tensor):
+                return input_tensor
+
+            @staticmethod
+            def backward(ctx, grad_output):
+                grad_output = grad_output.clone()
+                if num_adversaries > 0:
+                    # Flip the sign for adversaries
+                    grad_output[:, :num_adversaries*2] *= -1
+                return grad_output
 
         def new_log_prob(actions):
             log_prob = self.action_dist.distribution.log_prob(actions)
-            num_adversaries = self.features_extractor_kwargs.get('num_adversaries', 0)
-            print(log_prob[0])
-            if num_adversaries > 0:
-                # Flip the sign for adversaries
-                with torch.no_grad():
-                    log_prob[:, :num_adversaries*2] *= -1
-            print(log_prob[0])
-            exit()
+            log_prob = SignFlipFunction.apply(log_prob)
             return log_prob.sum(dim=-1)
         
         self.action_dist.log_prob = new_log_prob

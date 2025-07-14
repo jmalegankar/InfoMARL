@@ -131,7 +131,7 @@ class AttentionAnimator:
         
 
         if self.num_adversaries > 0:
-            fig.text(0.75, 0.85, "Predator Attention to Prey", ha="center", va="center",
+            fig.text(0.75, 0.88, "Predator Attention to Prey", ha="center", va="center",
                     fontsize=12, fontweight="bold", color="red")
 
         # Good agent attention subplots  
@@ -146,7 +146,7 @@ class AttentionAnimator:
             good_axes.append(ax)
             
         if self.num_good > 0:
-            fig.text(0.75, 0.45, "Prey Attention to Food", ha="center", va="center",
+            fig.text(0.75, 0.48, "Prey Attention to Food", ha="center", va="center",
                     fontsize=12, fontweight="bold", color="blue")
 
         # Frame counter

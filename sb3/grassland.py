@@ -13,7 +13,7 @@ class Scenario(BaseScenario):
         self.num_adversaries = kwargs.get("n_agents_adversaries", 3)
         self.num_agents = self.num_adversaries + self.num_good
         self.obs_agents = kwargs.get("obs_agents", True)
-        self.ratio = kwargs.get("ratio", 3)  # ratio = 3, 4, 5
+        self.ratio = kwargs.get("ratio", 2)  # ratio = 2, 3, 4, 5
         self.device = device
         self.collection_radius = kwargs.get("collection_radius", 0.05)
 
@@ -105,7 +105,7 @@ class Scenario(BaseScenario):
                                 torch.linalg.vector_norm(
                                     a.state.pos - food.state.pos, dim=1
                                 )
-                                for a in self.world.agents
+                                for a in self.world.agents if not a.adversary
                             ],
                             dim=-1,
                         ),
@@ -144,26 +144,26 @@ class Scenario(BaseScenario):
                     dist_to_food = torch.linalg.vector_norm(
                         a.state.pos - food.state.pos, dim=1
                     )
-                    closest = torch.min(
-                        torch.stack(
-                            [
-                                torch.linalg.vector_norm(
-                                    a.state.pos - food.state.pos, dim=1
-                                )
-                                for a in self.world.agents
-                            ],
-                            dim=-1,
-                        ),
-                        dim=-1,
-                    )[0]
-                    self.rew += closest
+                    # closest = torch.min(
+                    #     torch.stack(
+                    #         [
+                    #             torch.linalg.vector_norm(
+                    #                 a.state.pos - food.state.pos, dim=1
+                    #             )
+                    #             for a in self.world.agents if a.adversary
+                    #         ],
+                    #         dim=-1,
+                    #     ),
+                    #     dim=-1,
+                    # )[0]
+                    # self.rew += closest
 
                     # Check which environments have collected this food
                     newly_collected = (dist_to_food < self.collection_radius)
                     
                     if newly_collected.any():                        
                         # Give reward for collection
-                        self.rew -= newly_collected.float() * 50.0
+                        self.rew -= newly_collected.float() * 25.0
                         
                         # Handle collected food
                         new_pos = self.ratio * torch.rand(
