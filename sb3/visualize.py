@@ -131,7 +131,7 @@ class AttentionAnimator:
         
 
         if self.num_adversaries > 0:
-            fig.text(0.75, 0.88, "Predator Attention to Prey", ha="center", va="center",
+            fig.text(0.75, 0.91, "Predator Attention to Prey", ha="center", va="center",
                     fontsize=12, fontweight="bold", color="red")
 
         # Good agent attention subplots  
@@ -229,7 +229,7 @@ if __name__ == "__main__":
         n_agents_adversaries=3,
         num_envs=2,
         continuous_actions=True,
-        max_steps=400,
+        max_steps=100,
         seed=0,
         device="cpu",
         terminated_truncated=False,

@@ -179,6 +179,22 @@ class RandomAgentPolicy(nn.Module):
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
 
+        self.adv_latent_processing = nn.Sequential(
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+        )
+
+        self.good_latent_processing = nn.Sequential(
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim * 2),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+        )
+
     def forward(self, obs):
         """Extract features from observations using the attention mechanism"""
         cur_pos, cur_vel, landmarks, oth_adv, goods, advs, oth_good, adv_rnd, good_rnd = env_parser(
@@ -310,9 +326,12 @@ class RandomAgentPolicy(nn.Module):
         latent_adv = torch.cat((adv_curr, adv_good_curr), dim=-1)
         latent_good = torch.cat((good_curr, good_lmk), dim=-1)
 
+        latent_adv = self.adv_latent_processing(latent_adv)
+        latent_good = self.good_latent_processing(latent_good)
+
         latent = torch.cat((latent_adv, latent_good), dim=-2)
 
-        return latent.view(-1, self.num_adversaries+self.num_good, self.hidden_dim*2)
+        return latent.view(-1, self.num_adversaries+self.num_good, self.hidden_dim)
 
 
 class CriticPolicy(nn.Module):
@@ -320,10 +339,13 @@ class CriticPolicy(nn.Module):
         super().__init__()
         self.obs_size = obs_size
         self.layer = nn.Sequential(
-            nn.Linear(obs_size, hidden_dim*2),
+            nn.Linear(obs_size, hidden_dim*4),
             nn.SiLU(),
-            nn.Linear(hidden_dim*2, hidden_dim*2),
+            nn.Linear(hidden_dim*4, hidden_dim*4),
             nn.SiLU(),
+            nn.Linear(hidden_dim*4, hidden_dim*2),
+            nn.SiLU(),
+            nn.Linear(hidden_dim*2, hidden_dim),
         )
     
     def forward(self, obs):
@@ -350,7 +372,7 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
         num_adversaries=1,
         critic=False,
     ):
-        super(InfoMARLExtractor, self).__init__(observation_space, hidden_dim*2)
+        super(InfoMARLExtractor, self).__init__(observation_space, hidden_dim)
         self.num_good = num_good
         self.num_adversaries = num_adversaries
         self.n_agents = num_good + num_adversaries
@@ -434,7 +456,7 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
 
         # Default network architecture, from stable-baselines
         if net_arch is None:
-            net_arch = dict(pi=[64, 64], vf=[64, 64])
+            net_arch = dict(pi=[64,], vf=[64,])
 
         self.net_arch = net_arch
         self.activation_fn = activation_fn
