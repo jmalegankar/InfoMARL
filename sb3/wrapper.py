@@ -48,7 +48,7 @@ class VMASVecEnv(DummyVecEnv):
         actions = torch.from_numpy(actions).to(self.env.device).transpose(1, 0)
         obs, rews, dones, infos = self.env.step(actions)
         infos = [{} for _ in range(self.num_envs)]
-        rewards = sum(rews) / self.num_agents
+        rewards = sum(rews)
         if self.rnd_nums:
             rnd_nums = torch.rand(self.num_envs, self.num_agents, device=self.env.device).unsqueeze(-1)
             obs = torch.stack(obs, dim=0).transpose(1, 0)

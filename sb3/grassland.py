@@ -15,7 +15,6 @@ class Scenario(BaseScenario):
         self.obs_agents = kwargs.get("obs_agents", True)
         self.ratio = kwargs.get("ratio", 2)  # ratio = 2, 3, 4, 5
         self.device = device
-        self.collection_radius = kwargs.get("collection_radius", 0.05)
 
         self.num_landmarks = self.num_good
 
@@ -25,7 +24,7 @@ class Scenario(BaseScenario):
         for i in range(self.num_agents):
             agent = Agent(
                 name=f"agent {i}",
-                collide=False,
+                collide=True,
                 shape=Sphere(radius=(0.075 if i < self.num_adversaries else 0.05)),
                 color=(Color.RED if i < self.num_adversaries else Color.BLUE),
                 adversary=(True if i < self.num_adversaries else False),
@@ -82,104 +81,96 @@ class Scenario(BaseScenario):
                 batch_index=env_index,
             )
 
+    # return all agents that are not adversaries
+    def good_agents(self):
+        return [agent for agent in self.world.agents if not agent.adversary]
+
+    # return all adversarial agents
+    def adversaries(self):
+        return [agent for agent in self.world.agents if agent.adversary]
+    
+    def agent_reward(self, agent: Agent):
+        pos_rew = torch.zeros(
+            self.world.batch_dim, device=self.world.device, dtype=torch.float32
+        )
+
+        closest = torch.min(
+            torch.stack(
+                [
+                    torch.linalg.vector_norm(
+                        landmark.state.pos - agent.state.pos, dim=1
+                    )
+                    for landmark in self.world.landmarks
+                ],
+                dim=1,
+            ),
+            dim=-1,
+        )[0]
+        pos_rew -= closest
+
+        for landmark in self.world.landmarks:
+            found = self.world.is_overlapping(landmark, agent)
+            pos_rew[found] += 20
+            while torch.where(found)[0].shape[0] != 0:
+                landmark.set_pos(
+                    self.ratio
+                    * torch.rand(
+                        self.world.dim_p, device=self.world.device, dtype=torch.float32
+                    )
+                    - 0.5 * self.ratio,
+                    batch_index=torch.where(found)[0][0],
+                )
+                found = self.world.is_overlapping(landmark, agent)
+        
+        if agent.collide:
+            for a in self.world.agents:
+                if a != agent and a.adversary:
+                    killed = self.world.is_overlapping(a, agent)
+                    pos_rew[killed] -= 5
+                    while torch.where(killed)[0].shape[0] != 0:
+                        a.set_pos(
+                            self.ratio
+                            * torch.rand(
+                                self.world.dim_p, device=self.world.device, dtype=torch.float32
+                            )
+                            - 0.5 * self.ratio,
+                            batch_index=torch.where(killed)[0][0],
+                        )
+                        killed = self.world.is_overlapping(a, agent)
+        return pos_rew
+
+    def adversary_reward(self, agent: Agent):
+        adv_rew = torch.zeros(
+            self.world.batch_dim, device=self.world.device, dtype=torch.float32
+        )
+
+        closest = torch.min(
+            torch.stack(
+                [
+                    torch.linalg.vector_norm(
+                        agent.state.pos - evader.state.pos, dim=1
+                    )
+                    for evader in self.good_agents()
+                ],
+                dim=1,
+            ),
+            dim=-1,
+        )[0]
+        adv_rew -= closest
+
+        if agent.collide:
+            for a in self.world.agents:
+                if a != agent and not a.adversary:
+                    killed = self.world.is_overlapping(a, agent)
+                    adv_rew[killed] += 15
+
+        return adv_rew
+
     def reward(self, agent: Agent):
-        # Agents are rewarded based on minimum agent distance to each landmark
-        is_first = agent == self.world.agents[0]
-
-        if is_first:
-            self.rew = torch.zeros(
-                self.world.batch_dim, device=self.world.device, dtype=torch.float32
-            )
-
-            for a in self.world.agents:
-                if a.adversary:
-                    continue
-                for i, food in enumerate(self.world.landmarks):
-                    dist_to_food = torch.linalg.vector_norm(
-                        a.state.pos - food.state.pos, dim=1
-                    )
-
-                    closest = torch.min(
-                        torch.stack(
-                            [
-                                torch.linalg.vector_norm(
-                                    a.state.pos - food.state.pos, dim=1
-                                )
-                                for a in self.world.agents if not a.adversary
-                            ],
-                            dim=-1,
-                        ),
-                        dim=-1,
-                    )[0]
-                    self.rew -= closest
-
-                    # Check which environments have collected this food
-                    newly_collected = (dist_to_food < self.collection_radius)
-                    
-                    if newly_collected.any():                        
-                        # Give reward for collection
-                        self.rew += newly_collected.float() * 20.0
-                        
-                        # Handle collected food
-                        # if self.respawn_food:
-                        # Respawn food at new random location
-                        new_pos = self.ratio * torch.rand(
-                            self.world.batch_dim,
-                            self.world.dim_p,
-                            device=self.world.device,
-                            dtype=torch.float32,
-                        ) - 0.5 * self.ratio
-                        
-                        # Only update position in environments where food was collected
-                        current_pos = food.state.pos.clone()
-                        current_pos[newly_collected] = new_pos[newly_collected]
-                        food.set_pos(current_pos, batch_index=None)
-                            
-            for a in self.world.agents:
-                if not a.adversary:
-                    continue
-                for i, food in enumerate(self.world.agents):
-                    if food.adversary:
-                        continue
-                    dist_to_food = torch.linalg.vector_norm(
-                        a.state.pos - food.state.pos, dim=1
-                    )
-                    # closest = torch.min(
-                    #     torch.stack(
-                    #         [
-                    #             torch.linalg.vector_norm(
-                    #                 a.state.pos - food.state.pos, dim=1
-                    #             )
-                    #             for a in self.world.agents if a.adversary
-                    #         ],
-                    #         dim=-1,
-                    #     ),
-                    #     dim=-1,
-                    # )[0]
-                    # self.rew += closest
-
-                    # Check which environments have collected this food
-                    newly_collected = (dist_to_food < self.collection_radius)
-                    
-                    if newly_collected.any():                        
-                        # Give reward for collection
-                        self.rew -= newly_collected.float() * 25.0
-                        
-                        # Handle collected food
-                        new_pos = self.ratio * torch.rand(
-                            self.world.batch_dim,
-                            self.world.dim_p,
-                            device=self.world.device,
-                            dtype=torch.float32,
-                        ) - 0.5 * self.ratio
-                        
-                        # Only update position in environments where food was collected
-                        current_pos = food.state.pos.clone()
-                        current_pos[newly_collected] = new_pos[newly_collected]
-                        food.set_pos(current_pos, batch_index=None)            
-
-        return self.rew
-                
+        if agent.adversary:
+            return -self.adversary_reward(agent)
+        else:
+            return self.agent_reward(agent)                
 
     def observation(self, agent: Agent):
         observations = [

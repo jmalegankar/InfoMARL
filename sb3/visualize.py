@@ -88,9 +88,9 @@ class AttentionAnimator:
             )
             
             # take a step in the environment
-            obs, _, _, _ = self.env.step(action)
+            obs, reward, _, _ = self.env.step(action)
 
-            yield frame, adv_attention, good_attention
+            yield frame, adv_attention, good_attention, reward
             
     
     def create_mp4(self, path, fps=10, dpi=100):
@@ -157,7 +157,7 @@ class AttentionAnimator:
         writer = FFMpegWriter(fps=fps, metadata=dict(artist="Me"), bitrate=1800)
         with writer.saving(fig, path, dpi):
             for t in tqdm(range(self.max_steps)):
-                frame, adv_attention, good_attention = next(data_collector)
+                frame, adv_attention, good_attention, reward = next(data_collector)
                 # Update environment frame
                 ax_env.clear()
                 ax_env.axis("off")
@@ -165,7 +165,7 @@ class AttentionAnimator:
                 ax_env.imshow(frame)
 
                 # Update frame counter
-                txt.set_text(f"Frame: {t+1}/{self.max_steps}")
+                txt.set_text(f"Frame: {t+1}/{self.max_steps} - Reward: {reward[0]:.4f}")
 
                 # Update adversary attention heatmaps
                 for i, ax in enumerate(adv_axes):

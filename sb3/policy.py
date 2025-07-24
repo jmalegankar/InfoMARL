@@ -7,6 +7,8 @@ import warnings
 
 from bridge_attn import DiamondAttention
 
+import random
+
 def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs, device):
     """
     Permute the random numbers for each agent in the environment.
@@ -354,6 +356,25 @@ class CriticPolicy(nn.Module):
         obs = self.layer(obs)
         return obs
 
+class ActionNet(nn.Module):
+    def __init__(self, input_dim, output_dim, num_adversaries, num_good):
+        super(ActionNet, self).__init__()
+        self.num_adversaries = num_adversaries
+        self.num_good = num_good
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.good_fc = nn.Linear(input_dim, output_dim)
+        self.adversary_fc = nn.Linear(input_dim, output_dim)
+
+    def forward(self, x):
+        """
+        Forward pass through the action network.
+        """
+        good_actions = self.good_fc(x[:, :self.num_good, :])
+        adv_actions = self.adversary_fc(x[:, self.num_good:, :])
+        actions = torch.cat((adv_actions, good_actions), dim=1).view(-1, self.output_dim* (self.num_adversaries + self.num_good))
+        return actions
+
 class InfoMARLExtractor(BaseFeaturesExtractor):
     """
     Custom feature extractor for InfoMARL.
@@ -405,7 +426,6 @@ from stable_baselines3.common.distributions import (
     make_proba_distribution,
 )
 
-
 class InfoMARLActorCriticPolicy(ActorCriticPolicy):
     def __init__(
         self,
@@ -456,7 +476,7 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
 
         # Default network architecture, from stable-baselines
         if net_arch is None:
-            net_arch = dict(pi=[64,], vf=[64,])
+            net_arch = dict(pi=[], vf=[])
 
         self.net_arch = net_arch
         self.activation_fn = activation_fn
@@ -496,22 +516,30 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
 
         # Update log_prob method of the distribution to flip the sign for adversaries
         num_adversaries = self.features_extractor_kwargs.get('num_adversaries', 0)
+        self.counter = torch.tensor(0, dtype=torch.int64, device=self.device)
+        self.counter.requires_grad = False
         class SignFlipFunction(torch.autograd.Function):
             @staticmethod
-            def forward(ctx, input_tensor):
+            def forward(ctx, input_tensor, counter):
+                ctx.save_for_backward(counter.clone().detach())
                 return input_tensor
 
             @staticmethod
             def backward(ctx, grad_output):
+                counter = ctx.saved_tensors[0]
                 grad_output = grad_output.clone()
                 if num_adversaries > 0:
                     # Flip the sign for adversaries
                     grad_output[:, :num_adversaries*2] *= -1
-                return grad_output
+                    # grad_output[:, num_adversaries*2:] *= counter/150
+                    # grad_output[:, :num_adversaries*2] *= (300 - counter) / 150
+                return grad_output, None
 
         def new_log_prob(actions):
+            self.counter += 1
+            self.counter %= 300
             log_prob = self.action_dist.distribution.log_prob(actions)
-            log_prob = SignFlipFunction.apply(log_prob)
+            log_prob = SignFlipFunction.apply(log_prob, self.counter)
             return log_prob.sum(dim=-1)
         
         self.action_dist.log_prob = new_log_prob
@@ -521,8 +549,10 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
     
     def _build(self, lr_schedule):
         super()._build(lr_schedule)
-        self.action_net = nn.Sequential(
-            nn.Linear(self.mlp_extractor.latent_dim_pi, self.action_space.shape[-1]),
-            nn.Flatten(),
+        self.action_net = ActionNet(
+            input_dim=self.mlp_extractor.latent_dim_pi,
+            output_dim=self.action_space.shape[-1],
+            num_adversaries=self.features_extractor_kwargs.get('num_adversaries', 0),
+            num_good=self.features_extractor_kwargs.get('num_good', 0),
         )
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]
