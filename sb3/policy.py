@@ -24,8 +24,8 @@ def env_parser(obs:torch.Tensor, number_agents:int):
     obs = obs.view(-1, obs.shape[-1])
     cur_pos = obs[: ,0:2]
     cur_vel = obs[: ,2:4]
-    landmarks = obs[:, 4:4 + 2 * number_agents].contiguous().reshape(-1, number_agents, 2) + cur_pos.unsqueeze(1)
-    other_agents = obs[:, 4 + 2 * number_agents:-1].contiguous().reshape(-1, (number_agents - 1), 2) + cur_pos.unsqueeze(1)
+    landmarks = obs[:, 4:4 + 2 * number_agents].contiguous().reshape(-1, number_agents, 2)
+    other_agents = obs[:, 4 + 2 * number_agents:-1].contiguous().reshape(-1, (number_agents - 1), 2)
     return cur_pos, cur_vel, landmarks, other_agents, random_numbers
 
 def env_parser_food(obs: torch.Tensor, number_agents: int, number_food: int):

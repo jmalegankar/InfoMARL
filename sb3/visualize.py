@@ -80,9 +80,8 @@ class AttentionAnimator:
             raise ValueError(f"Model {model_name} not supported.")
 
     def collect_data(self):
-        print("Collecting data...")
         obs = self.env.reset()
-        for step in tqdm(range(self.max_steps)):
+        for _ in range(self.max_steps):
             action, _ = self.model.predict(obs, deterministic=True)
             actor = self.model.policy.features_extractor.actor
             cross_attention_weights = actor.cross_attention_weights
@@ -93,54 +92,17 @@ class AttentionAnimator:
                 mode="rgb_array",
                 agent_index_focus=None
             )
-
-            self.env_frames.append(frame)
-            self.cross_attention_weights.append(cross_attention_weights)
-
-            if self.scenario == "simple_spread":
-                #do same for landmark weights(landmarks are same as number of agents)
-                landmark_weights = actor.landmark_attention_weights
-                landmark_weights = landmark_weights.view(self.num_envs, self.n_agents, 1, self.n_agents)
-                landmark_weights = landmark_weights[self.env_idx].cpu().numpy()
-                self.landmark_weights.append(landmark_weights)
             
             # take a step in the environment
-            obs, rewards, dones, infos = self.env.step(action)
+            obs, _, _, _ = self.env.step(action)
+
+
+            yield frame, cross_attention_weights
             
     
     def create_mp4(self, path, fps=10, dpi=100):
         print(f"Creating mp4 file at {path}...")
-        # get att frames for heat map
-        cross_att_frames = [[] for _ in range(self.n_agents)]
-        for step_weights in self.cross_attention_weights:
-            # step_weights shape = (n_agents, n_agents, n_agents)
-            for i in range(self.n_agents):
-                cross_att_frames[i].append(step_weights[i])
-
-        # only for simple_spread
-        if self.scenario == "simple_spread":
-            landmark_att_frames = [[] for _ in range(self.n_agents)]
-            for step_weights in self.landmark_weights:
-                # step_weights shape = (n_agents, 1, n_agents)
-                for i in range(self.n_agents):
-                    landmark_att_frames[i].append(step_weights[i])
-
-            # add landmark weights to cross attention weights
-            for i in range(self.n_agents):
-                cross_att_frames[i] = np.concatenate((cross_att_frames[i], landmark_att_frames[i]), axis=1)
         
-        # if self.scenario == "food_collection":
-        #     # for food collection, we need to add food attention weights
-        #     food_att_frames = [[] for _ in range(self.n_agents)]
-        #     for step_weights in self.cross_attention_weights:
-        #         # step_weights shape = (n_agents, n_agents, n_food)
-        #         for i in range(self.n_agents):
-        #             food_att_frames[i].append(step_weights[i])
-
-        #     # add food weights to cross attention weights
-        #     for i in range(self.n_agents):
-        #         cross_att_frames[i] = np.concatenate((cross_att_frames[i], food_att_frames[i]), axis=1)
-
         n_cols = int(np.ceil(np.sqrt(self.n_agents)))
         n_rows = int(np.ceil(self.n_agents / n_cols))
 
@@ -166,17 +128,20 @@ class AttentionAnimator:
 
         txt = fig.text(0.5, 0.95, "", ha="center", va="top",
                     fontsize=14, color="black", fontweight="bold")
-
+        
+        # Data collector
+        collector = self.collect_data()
+        n_frames = self.max_steps
         # set up the writer
         writer = FFMpegWriter(fps=fps, metadata=dict(artist="Me"), bitrate=1800)
         with writer.saving(fig, path, dpi):
-            n_frames = len(self.env_frames)
             for t in tqdm(range(n_frames)):
+                frame, cross_att_weights = next(collector)
                 # update env frame
                 ax_env.clear()
                 ax_env.axis("off")
                 ax_env.set_title(f"{self.scenario} Scenario")
-                ax_env.imshow(self.env_frames[t])
+                ax_env.imshow(frame)
 
                 # update counter
                 txt.set_text(f"Frame: {t+1}/{n_frames}")
@@ -185,7 +150,7 @@ class AttentionAnimator:
                 for i, ax in enumerate(att_axes):
                     ax.clear()
                     ax.axis("off")
-                    heat = cross_att_frames[i][t]
+                    heat = cross_att_weights[i]
                     ax.imshow(
                         heat,
                         interpolation="nearest",
@@ -216,7 +181,7 @@ if __name__ == "__main__":
         num_envs=2,
         continuous_actions=True,
         max_steps=100,
-        seed=42,
+        seed=0,
         device="cpu",
         terminated_truncated=False,
         respawn_food=True,
