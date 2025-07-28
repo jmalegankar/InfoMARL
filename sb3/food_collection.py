@@ -194,7 +194,7 @@ class Scenario(BaseScenario):
         # Add relative positions of all food items
         for i, food in enumerate(self.world.landmarks):
             # Create position tensor
-            rel_pos = food.state.pos
+            rel_pos = food.state.pos - agent.state.pos
             
             # Only include food that hasn't been collected
             # This maintains a fixed observation size but marks collected food
@@ -210,7 +210,7 @@ class Scenario(BaseScenario):
         if self.obs_agents:
             for other in self.world.agents:
                 if other != agent:
-                    observations.append(other.state.pos)
+                    observations.append(other.state.pos - agent.state.pos)
         
         return torch.cat(observations, dim=-1)
 

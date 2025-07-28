@@ -41,6 +41,7 @@ else:
         gamma=0.99,
         n_steps=160,
         vf_coef=0.5,
+        ent_coef=0.001,
         target_kl=0.25,
         max_grad_norm=10.0,
         learning_rate=1e-4,
