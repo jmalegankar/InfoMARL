@@ -37,9 +37,9 @@ else:
         gamma=0.99,
         gae_lambda=1.0,
         clip_range=0.2,
-        n_steps=32,
+        n_steps=160,
         vf_coef=0.5,
-        target_kl=0.5,
+        target_kl=0.75,
         max_grad_norm=10.0,
         learning_rate=1e-4,
         policy_kwargs={

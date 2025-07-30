@@ -94,23 +94,24 @@ class Scenario(BaseScenario):
             self.world.batch_dim, device=self.world.device, dtype=torch.float32
         )
 
-        closest = torch.min(
-            torch.stack(
-                [
-                    torch.linalg.vector_norm(
-                        landmark.state.pos - agent.state.pos, dim=1
-                    )
-                    for landmark in self.world.landmarks
-                ],
-                dim=1,
-            ),
-            dim=-1,
-        )[0]
-        pos_rew -= closest
+        for landmark in self.world.landmarks:
+            closest = torch.min(
+                torch.stack(
+                    [
+                        torch.linalg.vector_norm(
+                            landmark.state.pos - agent.state.pos, dim=1
+                        )
+                        for agent in self.good_agents()
+                    ],
+                    dim=1,
+                ),
+                dim=-1,
+            )[0]
+            pos_rew -= closest / self.num_good
 
         for landmark in self.world.landmarks:
             found = self.world.is_overlapping(landmark, agent)
-            pos_rew[found] += 20
+            pos_rew[found] += 20 / self.num_good
             while torch.where(found)[0].shape[0] != 0:
                 landmark.set_pos(
                     self.ratio
@@ -126,7 +127,7 @@ class Scenario(BaseScenario):
             for a in self.world.agents:
                 if a != agent and a.adversary:
                     killed = self.world.is_overlapping(a, agent)
-                    pos_rew[killed] -= 5
+                    pos_rew[killed] -= 5 / self.num_adversaries
                     while torch.where(killed)[0].shape[0] != 0:
                         a.set_pos(
                             self.ratio
@@ -144,25 +145,26 @@ class Scenario(BaseScenario):
             self.world.batch_dim, device=self.world.device, dtype=torch.float32
         )
 
-        closest = torch.min(
-            torch.stack(
-                [
-                    torch.linalg.vector_norm(
-                        agent.state.pos - evader.state.pos, dim=1
-                    )
-                    for evader in self.good_agents()
-                ],
-                dim=1,
-            ),
-            dim=-1,
-        )[0]
-        adv_rew -= closest
+        for evader in self.good_agents():
+            closest = torch.min(
+                torch.stack(
+                    [
+                        torch.linalg.vector_norm(
+                            agent.state.pos - evader.state.pos, dim=1
+                        )
+                        for agent in self.adversaries()
+                    ],
+                    dim=1,
+                ),
+                dim=-1,
+            )[0]
+            adv_rew -= closest / self.num_adversaries
 
         if agent.collide:
             for a in self.world.agents:
                 if a != agent and not a.adversary:
                     killed = self.world.is_overlapping(a, agent)
-                    adv_rew[killed] += 15
+                    adv_rew[killed] += 15 / self.num_adversaries
 
         return adv_rew
 
@@ -170,7 +172,7 @@ class Scenario(BaseScenario):
         if agent.adversary:
             return -self.adversary_reward(agent)
         else:
-            return self.agent_reward(agent)                
+            return self.agent_reward(agent)         
 
     def observation(self, agent: Agent):
         observations = [
@@ -180,13 +182,13 @@ class Scenario(BaseScenario):
 
         for food in self.world.landmarks:
             observations.append(
-                food.state.pos
+                food.state.pos - agent.state.pos
             )
         
         for other_agent in self.world.agents:
             if other_agent == agent:
                 continue
-            observations.append(other_agent.state.pos)
+            observations.append(other_agent.state.pos - agent.state.pos)
         
         return torch.cat(observations, dim=-1)
 
