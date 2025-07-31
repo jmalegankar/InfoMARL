@@ -61,6 +61,8 @@ class AttentionAnimator:
             self.landmark_weights = []
             if self.scenario == "food_collection":
                 self.n_food = kwargs["n_food"]
+            else:
+                self.n_food = self.n_agents
             
     
     def attach_and_load_model(self, model_name, path, **kwargs):
@@ -70,7 +72,7 @@ class AttentionAnimator:
                 self.model.policy.observation_space = self.env.observation_space
                 self.model.policy.action_space = self.env.action_space
                 self.model.policy.pi_features_extractor.actor.number_agents = self.env.num_agents
-                self.model.policy.pi_features_extractor.actor.number_food = self.n_food
+                self.model.policy.pi_features_extractor.actor.number_food = self.env.num_agents
 
                 with torch.no_grad():
                     self.model.policy.log_std = torch.nn.Parameter(
@@ -175,18 +177,14 @@ if __name__ == "__main__":
     animator.create_env(
         sim="vmas",
         env_idx=0,
-        scenario="food_collection",
-        n_agents=4,
-        n_food=6,
+        scenario="simple_spread",
+        n_agents=6,
         num_envs=2,
         continuous_actions=True,
         max_steps=100,
-        seed=0,
+        seed=1,
         device="cpu",
-        terminated_truncated=False,
-        respawn_food=True,
-        collection_radius=0.15,
-        
+        terminated_truncated=False,        
     )
 
     animator.attach_and_load_model(

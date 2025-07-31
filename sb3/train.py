@@ -10,8 +10,7 @@ import os
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 env = vmas.make_env(
-    scenario="food_collection",
-    n_food=6,
+    scenario="simple_spread",
     n_agents=4,
     num_envs=64,
     continuous_actions=True,
@@ -19,7 +18,6 @@ env = vmas.make_env(
     seed=42,
     device=device,
     terminated_truncated=False,
-    respawn_food=True,
 )
 
 env = wrapper.VMASVecEnv(env, rnd_nums=True)
@@ -41,7 +39,6 @@ else:
         gamma=0.99,
         n_steps=160,
         vf_coef=0.5,
-        ent_coef=0.001,
         target_kl=0.25,
         max_grad_norm=10.0,
         learning_rate=1e-4,
