@@ -19,43 +19,15 @@ def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs,
     permuted_rand = torch.gather(expanded_rand, dim=2, index=permutation_indices.unsqueeze(0).expand(num_envs, -1, -1))
     return permuted_rand
 
-def env_parser(obs:torch.Tensor, number_agents:int):
-    random_numbers = obs[..., -1]
-    obs = obs.view(-1, obs.shape[-1])
-    cur_pos = obs[: ,0:2]
-    cur_vel = obs[: ,2:4]
-    landmarks = obs[:, 4:4 + 2 * number_agents].contiguous().reshape(-1, number_agents, 2)
-    other_agents = obs[:, 4 + 2 * number_agents:-1].contiguous().reshape(-1, (number_agents - 1), 2)
-    return cur_pos, cur_vel, landmarks, other_agents, random_numbers
 
-def env_parser_food(obs: torch.Tensor, number_agents: int, number_food: int):
+def env_parser(obs, number_agents, number_actions, agent_dim, action_dim):
     """
-    Parse observations from food collection environment.
-    
-    Observation structure per agent:
-    - Agent position (2)
-    - Agent velocity (2)
-    - Food relative positions (number_food * 2)
-    - Other agents relative positions (number_agents - 1) * 2
-    - Other agents relative velocities (number_agents - 1) * 2
-    - Random number (1) if using rnd_nums wrapper
+    Parse the environment observations into structured tensors.
     """
-    random_numbers = obs[..., -1]
-    obs = obs.view(-1, obs.shape[-1])
-    cur_pos = torch.zeros_like(obs[:, 0:2])
-    cur_vel = obs[:, 2:4]
-    food = obs[:, 4:4 + number_food * 2].contiguous().view(-1, number_food, 2)
-    other_agents = obs[:, 4 + number_food * 2:-1].contiguous().view(-1, (number_agents - 1), 2)
-    food_mask = (food == -999.0).any(dim=-1)
-
-    if number_agents == 1:
-        food = food.unsqueeze(-2)
-        other_agents = other_agents.unsqueeze(-2)
-        num_envs = cur_pos.shape[0]
-        return cur_pos.view(num_envs, 2), cur_vel.view(num_envs, 2), food.contiguous(), other_agents.contiguous().view(num_envs, 0, 2), random_numbers, food_mask
-    else:
-        return cur_pos, cur_vel, food, other_agents, random_numbers, food_mask
-
+    agents = torch.zeros((obs.shape[0], number_agents, number_agents*agent_dim), device=obs.device)
+    landmarks = torch.eye(number_actions, device=obs.device).view(1, 1, -1).repeat(obs.shape[0], number_agents, 1)
+    random_numbers = obs[..., -1].view(-1, number_agents)
+    return landmarks, agents, random_numbers
 
 class RandomAgentPolicy(nn.Module):
     def __init__(self, number_agents, number_food, agent_dim, landmark_dim, hidden_dim):
@@ -66,13 +38,6 @@ class RandomAgentPolicy(nn.Module):
         self.number_food = number_food
         self.hidden_dim = hidden_dim
         self.training = True  # Add this to control behavior
-
-        # Network architecture for processing agent observations
-        self.cur_agent_embedding = nn.Sequential(
-            nn.Linear(self.agent_dim * 2, self.hidden_dim),
-            nn.SiLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-        )
         
         # Network architecture for processing landmark positions
         self.landmark_embedding = nn.Sequential(
@@ -95,13 +60,13 @@ class RandomAgentPolicy(nn.Module):
             dropout=0.0,
         )
 
-        self.cur_agent = DiamondAttention(
+        self.cur_landmark = DiamondAttention(
             hidden_dim=self.hidden_dim,
             num_heads=1,
             dropout=0.0,
         )
 
-        self.cur_landmark = DiamondAttention(
+        self.cur_agent = DiamondAttention(
             hidden_dim=self.hidden_dim,
             num_heads=1,
             dropout=0.0,
@@ -109,30 +74,25 @@ class RandomAgentPolicy(nn.Module):
 
     def forward(self, obs):
         """Extract features from observations using the attention mechanism"""
-        cur_pos, cur_vel, landmarks, other_agents, random_numbers, food_mask = env_parser_food(obs, self.number_agents, self.number_food)
+        landmarks, agents, random_numbers = env_parser(
+            obs, self.number_agents, self.number_food, self.agent_dim, self.landmark_dim
+        )
 
         random_numbers = get_permuted_env_random_numbers(
-            random_numbers, self.number_agents, obs.shape[0], cur_pos.device
+            random_numbers, self.number_agents, obs.shape[0], agents.device
         ).view(-1, self.number_agents)
 
-        cur_agent = torch.cat((cur_pos, cur_vel), dim=-1)
-        all_agents_list = torch.cat((cur_pos.unsqueeze(1), other_agents), dim=1)
-
-        # Encode current agent
-        cur_agent_embeddings = self.cur_agent_embedding(cur_agent)
-        
         # Encode landmarks
         landmark_embeddings = self.landmark_embedding(
-            landmarks.view(-1, 2)
+            landmarks.view(-1, self.landmark_dim)
         ).view(-1, self.number_food, self.hidden_dim)
         
         # Encode all agents
         all_agents_embeddings = self.all_agent_embedding(
-            all_agents_list.view(-1, 2)
+            agents.view(-1, self.agent_dim)
         ).view(-1, self.number_agents, self.hidden_dim)
         # Create attention mask for cross attention
         agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1, 1))
-        food_mask = food_mask.unsqueeze(-1)
 
         agent_emb, landmark_emb, cross_weights = self.agent_landmark(
             landmark_embeddings,
@@ -146,12 +106,14 @@ class RandomAgentPolicy(nn.Module):
             self.cross_attention_weights = cross_weights
         else:
             del cross_weights
+        
+        cur_agent_embeddings = torch.zeros((obs.shape[0]*self.number_agents, 1, self.hidden_dim), device=obs.device)
 
         _, landmark_emb, landmark_weights = self.cur_landmark(
-            cur_agent_embeddings.unsqueeze(1),
-            landmark_embeddings,
-            cur_agent_embeddings.unsqueeze(1),
-            landmark_embeddings,
+            cur_agent_embeddings,
+            landmark_emb,
+            cur_agent_embeddings,
+            landmark_emb,
         )
 
         if not self.training:
@@ -160,9 +122,9 @@ class RandomAgentPolicy(nn.Module):
             del landmark_weights
 
         _, cur_agent_embeddings, _ = self.cur_agent(
-            cur_agent_embeddings.unsqueeze(1),
+            cur_agent_embeddings,
             agent_emb,
-            cur_agent_embeddings.unsqueeze(1),
+            cur_agent_embeddings,
             agent_emb,
             key_mask=agents_mask,
         )
@@ -202,13 +164,12 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
         self,
         observation_space,
         agent_dim=2,
-        landmark_dim=2,
         hidden_dim=64,
         critic=False,
     ):
         super(InfoMARLExtractor, self).__init__(observation_space, hidden_dim*2)
         self.n_agents = observation_space.shape[0]
-        self.n_food = (observation_space.shape[1] - ((self.n_agents - 1) * 2) - 5) // 2
+        self.n_food = observation_space.shape[1] - 1  # Exclude the random number
         if critic:
             self.critic = CriticPolicy(
                 obs_size=self.n_agents*(observation_space.shape[-1]-1),
@@ -219,7 +180,7 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
                 number_agents=self.n_agents,
                 number_food=self.n_food,
                 agent_dim=agent_dim,
-                landmark_dim=landmark_dim,
+                landmark_dim=self.n_food,
                 hidden_dim=hidden_dim,
             )
 
@@ -331,7 +292,7 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
     def _build(self, lr_schedule):
         super()._build(lr_schedule)
         self.action_net = nn.Sequential(
-            nn.Linear(self.mlp_extractor.latent_dim_pi, self.action_space.shape[-1]),
+            nn.Linear(self.mlp_extractor.latent_dim_pi, self.action_space[0].n),
             nn.Flatten(),
         )
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]

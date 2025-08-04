@@ -1,6 +1,6 @@
 import policy
-import vmas
-import wrapper
+import xor_game
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 from stable_baselines3 import PPO
 
@@ -9,20 +9,8 @@ import os
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-env = vmas.make_env(
-    scenario="food_collection",
-    n_food=6,
-    n_agents=4,
-    num_envs=64,
-    continuous_actions=True,
-    max_steps=400,
-    seed=42,
-    device=device,
-    terminated_truncated=False,
-    respawn_food=True,
-)
+env = DummyVecEnv([lambda: xor_game.XORGameEnv(n_agents=2, n_actions=3) for _ in range(64)])
 
-env = wrapper.VMASVecEnv(env, rnd_nums=True)
 obs = env.reset()
 
 if os.path.exists("ppo_infomarl.zip"):
@@ -36,17 +24,27 @@ else:
         env=env,
         device=device,
         verbose=1,
-        batch_size=1024,
-        n_epochs=10,
+        batch_size=128,
+        n_epochs=1,
         gamma=0.99,
-        n_steps=160,
+        n_steps=2,
         vf_coef=0.5,
-        ent_coef=0.001,
         target_kl=0.25,
         max_grad_norm=10.0,
         learning_rate=1e-4,
     )
 
-while True:
-    model.learn(total_timesteps=300000, progress_bar=True)
-    model.save("ppo_infomarl")
+model.learn(total_timesteps=50000, progress_bar=True)
+
+env = DummyVecEnv([lambda: xor_game.XORGameEnv(n_agents=3, n_actions=3) for _ in range(2)])
+
+model.policy.action_space = env.action_space
+model.policy.pi_features_extractor.actor.number_agents = 3
+model.policy.observation_space = env.observation_space
+model.policy.action_dist.action_dims = [3] * 3
+
+obs = env.reset()
+actions = model.predict(obs, deterministic=True)[0]
+print(f"Actions: {actions}")
+_, rewards, dones, infos = env.step(actions)
+print(f"Rewards: {rewards}")
