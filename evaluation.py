@@ -18,23 +18,39 @@ def main(args):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    """ Change parameters here for evaluation """
-    evaluation_env = make_env(
-        scenario_name=args.scenario_name,
+    if args.scenario_name == "food_collection":
+        evaluation_env = make_env(
+        scenario_name="food_collection",
         num_envs=1,
         device=device,
-        continuous_actions=True,
+        continuous_actions=args.continuous_actions,
         wrapper=wrapper,
         seed=args.seed,
         max_steps=args.max_frames_eval,
-        # Environment specific variables
         n_agents=args.num_agents_eval,
-        n_agents_good=args.n_agents_good_eval,
-        n_agents_adversaries=args.n_agents_adversaries_eval,
-        n_packages=1,
-        share_reward=True,
+        n_food=getattr(args, "n_food", 5),
+        respawn_food=getattr(args, "respawn_food", True),
+        collection_radius=getattr(args, "collection_radius", 0.05),
         ratio=args.ratio_eval,
+        share_reward=args.share_reward,
     )
+    else:
+        evaluation_env = make_env(
+            scenario_name=args.scenario_name,
+            num_envs=1,
+            device=device,
+            continuous_actions=True,
+            wrapper=wrapper,
+            seed=args.seed,
+            max_steps=args.max_frames_eval,
+            # Environment specific variables
+            n_agents=args.num_agents_eval,
+            n_agents_good=args.n_agents_good_eval,
+            n_agents_adversaries=args.n_agents_adversaries_eval,
+            n_packages=1,
+            share_reward=True,
+            ratio=args.ratio_eval
+        )
     if args.scenario_name == "reverse_transport":
         evaluation_env.world.landmarks[1].mass = 1
 
@@ -78,7 +94,7 @@ def main(args):
         from functions import GSA_actor
     else:
         args.neural_network_name = "LEMURS"
-        if args.scenario_name == "simple_spread" or args.scenario_name == "reverse_transport" or args.scenario_name == "sampling":
+        if args.scenario_name == "simple_spread" or args.scenario_name == "reverse_transport" or args.scenario_name == "sampling" or args.scenario_name == "food_collection":
             from functions import LEMURS_actor
         else:
             from functions import PIMARL_actor
