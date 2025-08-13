@@ -29,8 +29,8 @@ def main(args):
     np.random.seed(args.seed)
 
     """ Create environments """
+
     if args.scenario_name == "food_collection":
-        # TRAIN ENV
         env = make_env(
             scenario_name="food_collection",
             num_envs=args.num_envs,
@@ -43,8 +43,22 @@ def main(args):
             n_food=getattr(args, "n_food", 5),
             respawn_food=getattr(args, "respawn_food", True),
             collection_radius=getattr(args, "collection_radius", 0.05),
-            ratio=args.ratio,
-            share_reward=args.share_reward,
+            obs_agents=getattr(args, "obs_agents", True)
+        )
+
+        evaluation_env = make_env(
+            scenario_name="food_collection",
+            num_envs=1,
+            device=device,
+            continuous_actions=args.continuous_actions,
+            wrapper=wrapper,
+            seed=args.seed,
+            max_steps=args.max_frames_eval,
+            n_agents=args.num_agents_eval,
+            n_food=getattr(args, "n_food", 5),
+            respawn_food=getattr(args, "respawn_food", True),
+            collection_radius=getattr(args, "collection_radius", 0.05),
+            obs_agents=getattr(args, "obs_agents", True)
         )
     else:
         env = make_env(
@@ -55,31 +69,12 @@ def main(args):
             wrapper=wrapper,
             seed=args.seed,
             max_steps=args.max_steps,
-            # Environment specific variables
             n_agents=args.n_agents,
             n_agents_good=args.n_agents_good,
             n_agents_adversaries=args.n_agents_adversaries,
             n_packages=1,
             ratio=args.ratio,
-
         )
-    if args.scenario_name == "food_collection":
-        evaluation_env = make_env(
-        scenario_name="food_collection",
-        num_envs=1,
-        device=device,
-        continuous_actions=args.continuous_actions,
-        wrapper=wrapper,
-        seed=args.seed,
-        max_steps=args.max_frames_eval,
-        n_agents=args.num_agents_eval,
-        n_food=getattr(args, "n_food", 5),
-        respawn_food=getattr(args, "respawn_food", True),
-        collection_radius=getattr(args, "collection_radius", 0.05),
-        ratio=args.ratio_eval,
-        share_reward=args.share_reward,
-    )
-    else:
         evaluation_env = make_env(
             scenario_name=args.scenario_name,
             num_envs=1,
@@ -88,7 +83,6 @@ def main(args):
             wrapper=wrapper,
             seed=args.seed,
             max_steps=args.max_steps,
-            # Environment specific variables
             n_agents=args.n_agents,
             n_agents_good=args.n_agents_good,
             n_agents_adversaries=args.n_agents_adversaries,

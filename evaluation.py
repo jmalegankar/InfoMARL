@@ -20,20 +20,19 @@ def main(args):
 
     if args.scenario_name == "food_collection":
         evaluation_env = make_env(
-        scenario_name="food_collection",
-        num_envs=1,
-        device=device,
-        continuous_actions=args.continuous_actions,
-        wrapper=wrapper,
-        seed=args.seed,
-        max_steps=args.max_frames_eval,
-        n_agents=args.num_agents_eval,
-        n_food=getattr(args, "n_food", 5),
-        respawn_food=getattr(args, "respawn_food", True),
-        collection_radius=getattr(args, "collection_radius", 0.05),
-        ratio=args.ratio_eval,
-        share_reward=args.share_reward,
-    )
+            scenario_name="food_collection",
+            num_envs=1,
+            device=device,
+            continuous_actions=args.continuous_actions,
+            wrapper=wrapper,
+            seed=args.seed,
+            max_steps=args.max_frames_eval,
+            n_agents=args.num_agents_eval,
+            n_food=getattr(args, "n_food", 5),
+            respawn_food=getattr(args, "respawn_food", True),
+            collection_radius=getattr(args, "collection_radius", 0.05),
+            obs_agents=getattr(args, "obs_agents", True)
+        )
     else:
         evaluation_env = make_env(
             scenario_name=args.scenario_name,
@@ -199,3 +198,4 @@ def main(args):
 
 if __name__ == "__main__":
     main(parse_args())
+
