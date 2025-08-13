@@ -17,6 +17,8 @@ import torch
 import numpy as np
 import PIL
 
+import os
+
 
 def main(args):
     """ Initial setup """
@@ -476,6 +478,22 @@ def main(args):
             torch.save(q_value_net_2, folder+'/q_value_net_2_'+args.scenario_name+'_'+str(current_frame)+'_'+str(args.neural_network_name)+'.pth')
             torch.save(actor_net, folder+'/actor_net_'+args.scenario_name+'_'+str(current_frame)+'_'+str(args.neural_network_name)+'.pth')
 
+            file = folder+'/q_value_target_net_1_'+args.scenario_name+'_'+str(current_frame - 2*args.save_trainer_interval)+'_'+str(args.neural_network_name)+'.pth'
+            if os.path.exists(file):
+                os.remove(file)
+            file = folder+'/q_value_target_net_2_'+args.scenario_name+'_'+str(current_frame - 2*args.save_trainer_interval)+'_'+str(args.neural_network_name)+'.pth'
+            if os.path.exists(file):
+                os.remove(file)
+            file = folder+'/q_value_net_1_'+args.scenario_name+'_'+str(current_frame - 2*args.save_trainer_interval)+'_'+str(args.neural_network_name)+'.pth'
+            if os.path.exists(file):
+                os.remove(file)
+            file = folder+'/q_value_net_2_'+args.scenario_name+'_'+str(current_frame - 2*args.save_trainer_interval)+'_'+str(args.neural_network_name)+'.pth'
+            if os.path.exists(file):
+                os.remove(file)
+            file = folder+'/actor_net_'+args.scenario_name+'_'+str(current_frame - 2*args.save_trainer_interval)+'_'+str(args.neural_network_name)+'.pth'
+            if os.path.exists(file):
+                os.remove(file)
+
             # Display some metrics
             print("\n-------------------------------------------\n")
             print(f"Training instance {int(current_frame / args.frames_per_batch)}")
@@ -534,6 +552,12 @@ def main(args):
             np.save(folder+'/MEAN_CUM_REWS_'+args.scenario_name+'_'+str(current_frame)+'_'+str(args.neural_network_name)+'.npy', np.array(MEAN_CUM_REWS))
             np.save(folder+'/STD_CUM_REWS_'+args.scenario_name+'_'+str(current_frame)+'_'+str(args.neural_network_name)+'.npy', np.array(STD_CUM_REWS))
 
+            file = folder+'/MEAN_CUM_REWS_'+args.scenario_name+'_'+str(current_frame - 2*args.evaluation_interval)+'_'+str(args.neural_network_name)+'.npy'
+            if os.path.exists(file):
+                os.remove(file)
+            file = folder+'/STD_CUM_REWS_'+args.scenario_name+'_'+str(current_frame - 2*args.evaluation_interval)+'_'+str(args.neural_network_name)+'.npy'
+            if os.path.exists(file):
+                os.remove(file)
 
 if __name__ == "__main__":
     main(parse_args())
