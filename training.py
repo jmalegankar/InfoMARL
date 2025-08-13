@@ -31,37 +31,66 @@ def main(args):
     np.random.seed(args.seed)
 
     """ Create environments """
-    env = make_env(
-        scenario_name=args.scenario_name,
-        num_envs=args.num_envs,
-        device=device,
-        continuous_actions=True,
-        wrapper=wrapper,
-        seed=args.seed,
-        max_steps=args.max_steps,
-        # Environment specific variables
-        n_agents=args.n_agents,
-        n_agents_good=args.n_agents_good,
-        n_agents_adversaries=args.n_agents_adversaries,
-        n_packages=1,
-        ratio=args.ratio,
-    )
 
-    evaluation_env = make_env(
-        scenario_name=args.scenario_name,
-        num_envs=1,
-        device=device,
-        continuous_actions=True,
-        wrapper=wrapper,
-        seed=args.seed,
-        max_steps=args.max_steps,
-        # Environment specific variables
-        n_agents=args.n_agents,
-        n_agents_good=args.n_agents_good,
-        n_agents_adversaries=args.n_agents_adversaries,
-        n_packages=1,
-        ratio=args.ratio,
-    )
+    if args.scenario_name == "food_collection":
+        env = make_env(
+            scenario_name="food_collection",
+            num_envs=args.num_envs,
+            device=device,
+            continuous_actions=args.continuous_actions,
+            wrapper=wrapper,
+            seed=args.seed,
+            max_steps=args.max_steps,
+            n_agents=args.n_agents,
+            n_food=getattr(args, "n_food", 5),
+            respawn_food=getattr(args, "respawn_food", True),
+            collection_radius=getattr(args, "collection_radius", 0.05),
+            obs_agents=getattr(args, "obs_agents", True)
+        )
+
+        evaluation_env = make_env(
+            scenario_name="food_collection",
+            num_envs=1,
+            device=device,
+            continuous_actions=args.continuous_actions,
+            wrapper=wrapper,
+            seed=args.seed,
+            max_steps=args.max_frames_eval,
+            n_agents=args.num_agents_eval,
+            n_food=getattr(args, "n_food", 5),
+            respawn_food=getattr(args, "respawn_food", True),
+            collection_radius=getattr(args, "collection_radius", 0.05),
+            obs_agents=getattr(args, "obs_agents", True)
+        )
+    else:
+        env = make_env(
+            scenario_name=args.scenario_name,
+            num_envs=args.num_envs,
+            device=device,
+            continuous_actions=True,
+            wrapper=wrapper,
+            seed=args.seed,
+            max_steps=args.max_steps,
+            n_agents=args.n_agents,
+            n_agents_good=args.n_agents_good,
+            n_agents_adversaries=args.n_agents_adversaries,
+            n_packages=1,
+            ratio=args.ratio,
+        )
+        evaluation_env = make_env(
+            scenario_name=args.scenario_name,
+            num_envs=1,
+            device=device,
+            continuous_actions=True,
+            wrapper=wrapper,
+            seed=args.seed,
+            max_steps=args.max_steps,
+            n_agents=args.n_agents,
+            n_agents_good=args.n_agents_good,
+            n_agents_adversaries=args.n_agents_adversaries,
+            n_packages=1,
+            ratio=args.ratio,
+        )
 
     if args.scenario_name == "reverse_transport":
         env.world.landmarks[1].mass = 1
@@ -134,7 +163,7 @@ def main(args):
         q_value_target_net_1 = GSA_qvalue(qvalue_config)
         q_value_target_net_2 = GSA_qvalue(qvalue_config)
     else:
-        if args.scenario_name == "simple_spread" or args.scenario_name == "reverse_transport" or args.scenario_name == "sampling":
+        if args.scenario_name == "simple_spread" or args.scenario_name == "reverse_transport" or args.scenario_name == "sampling" or args.scenario_name == "food_collection":
             actor_net = LEMURS_actor(actor_config)
             q_value_net_1 = LEMURS_qvalue(qvalue_config)
             q_value_net_2 = LEMURS_qvalue(qvalue_config)
