@@ -128,7 +128,7 @@ def parse_args():
     parser.add_argument(
         "--ratio",
         type=float,
-        default=4.0,
+        default=2.0,
         help="length of the size of the squared arena"
     )
 
