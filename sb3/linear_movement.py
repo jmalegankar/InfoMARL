@@ -86,11 +86,11 @@ class AttentionAnimator:
         pos = torch.tensor([-1.0, 0.0])
         for agent in self.env.env.agents:
             agent.set_pos(pos, 0)
-            pos[0]+= 0.5
-        pos = torch.tensor([-1.0, 0.5])
+            pos[0]+= 0.4
+        # pos = torch.tensor([-1.0, 0.5])
         for landmark in self.env.env.world.landmarks:
             landmark.set_pos(pos, 0)
-            pos[0]+= 0.5
+            pos[0]+= 0.4
         actions = np.zeros_like(self.env.action_space.sample())
         obs, _, _, _ = self.env.step(np.array([actions, actions]))
         for _ in range(self.max_steps):
@@ -188,7 +188,7 @@ if __name__ == "__main__":
         sim="vmas",
         env_idx=0,
         scenario="simple_spread",
-        n_agents=2,
+        n_agents=3,
         num_envs=2,
         continuous_actions=True,
         max_steps=200,
