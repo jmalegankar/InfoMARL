@@ -83,14 +83,20 @@ class AttentionAnimator:
 
     def collect_data(self):
         obs = self.env.reset()
-        pos = torch.tensor([-1.0, 0.0])
-        for agent in self.env.env.agents:
+        pos = torch.tensor([-1.0, -0.5])
+        for i, agent in enumerate(self.env.env.agents):
             agent.set_pos(pos, 0)
-            pos[0]+= 0.4
-        # pos = torch.tensor([-1.0, 0.5])
-        for landmark in self.env.env.world.landmarks:
+            pos[0]+= 0.5
+            if i == 1:
+                pos[0] = -1.0
+                pos[1] = 0.5
+        pos = torch.tensor([0.0, -0.5])
+        for i, landmark in enumerate(self.env.env.world.landmarks):
             landmark.set_pos(pos, 0)
-            pos[0]+= 0.4
+            pos[0]+= 0.5
+            if i == 1:
+                pos[0] = 0.0
+                pos[1] = 0.5
         actions = np.zeros_like(self.env.action_space.sample())
         obs, _, _, _ = self.env.step(np.array([actions, actions]))
         for _ in range(self.max_steps):
@@ -112,7 +118,7 @@ class AttentionAnimator:
             yield frame, cross_attention_weights
             
     
-    def create_mp4(self, path, fps=10, dpi=100):
+    def create_mp4(self, path, fps=10, dpi=50):
         print(f"Creating mp4 file at {path}...")
         
         n_cols = int(np.ceil(np.sqrt(self.n_agents)))
@@ -145,7 +151,7 @@ class AttentionAnimator:
         collector = self.collect_data()
         n_frames = self.max_steps
         # set up the writer
-        writer = FFMpegWriter(fps=fps, metadata=dict(artist="Me"), bitrate=1800)
+        writer = FFMpegWriter(fps=fps, metadata=dict(artist="Me"), bitrate=-1)
         with writer.saving(fig, path, dpi):
             for t in tqdm(range(n_frames)):
                 frame, cross_att_weights = next(collector)
@@ -188,10 +194,10 @@ if __name__ == "__main__":
         sim="vmas",
         env_idx=0,
         scenario="simple_spread",
-        n_agents=3,
+        n_agents=4,
         num_envs=2,
         continuous_actions=True,
-        max_steps=200,
+        max_steps=100,
         seed=1,
         device="cpu",
         terminated_truncated=False,        
