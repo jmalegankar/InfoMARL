@@ -96,53 +96,97 @@ def main(args):
         env.world.landmarks[1].mass = 1
         evaluation_env.world.landmarks[1].mass = 1
 
-    """ Setup actor network """
-    if args.scenario_name == "grassland_vmas" or args.scenario_name == "adversarial_vmas":
-        actor_config = {
-            "device": device,
-            "n_agents": args.n_agents_good + args.n_agents_adversaries,
-            "observation_dim_per_agent": env.observation_space[0].shape[0],
-            "action_dim_per_agent": env.action_space[0].shape[0],
-            "r_communication": args.r_communication,
-            "batch_size": args.batch_size,
-            "num_envs": args.num_envs,
-            "scenario_name": args.scenario_name,
-            "preprocessor": preprocessor,
-            "ratio": args.ratio,
-            "ratio_eval": args.ratio_eval
-        }
-    else:
-        actor_config = {
-            "device": device,
-            "n_agents": args.n_agents,
-            "observation_dim_per_agent": env.observation_space[0].shape[0],
-            "action_dim_per_agent": env.action_space[0].shape[0],
-            "r_communication": args.r_communication,
-            "batch_size": args.batch_size,
-            "num_envs": args.num_envs,
-            "scenario_name": args.scenario_name,
-            "preprocessor": preprocessor,
-            "ratio": args.ratio,
-            "ratio_eval": args.ratio_eval
-        }
+    def setup_actor_config(args, env):
+        """Calculate correct observation dimensions for different scenarios"""
+        
+        # Calculate observation dimension based on scenario
+        if args.scenario_name == "food_collection":
+            # For food collection: pos(2) + vel(2) + food_positions(n_food*2) + other_agents((n_agents-1)*2)
+            n_food = getattr(args, 'n_food', 5)  # Default 5 food items
+            obs_agents = getattr(args, 'obs_agents', True)  # Default observe other agents
+            
+            observation_dim_per_agent = 4 + n_food * 2  # pos + vel + food positions
+            if obs_agents:
+                observation_dim_per_agent += (args.n_agents - 1) * 2  # other agents
+                
+        elif args.scenario_name == "simple_spread":
+            observation_dim_per_agent = 6  # Fixed for simple spread
+        elif args.scenario_name in ["grassland_vmas", "adversarial_vmas"]:
+            observation_dim_per_agent = env.observation_space[0].shape[0]
+        else:
+            observation_dim_per_agent = env.observation_space[0].shape[0]
+        
+        # Setup actor config
+        if args.scenario_name == "grassland_vmas" or args.scenario_name == "adversarial_vmas":
+            actor_config = {
+                "device": device,
+                "n_agents": args.n_agents_good + args.n_agents_adversaries,
+                "observation_dim_per_agent": observation_dim_per_agent,
+                "action_dim_per_agent": env.action_space[0].shape[0],
+                "r_communication": args.r_communication,
+                "batch_size": args.batch_size,
+                "num_envs": args.num_envs,
+                "scenario_name": args.scenario_name,
+                "preprocessor": preprocessor,
+                "ratio": args.ratio,
+                "ratio_eval": args.ratio_eval
+            }
+        else:
+            actor_config = {
+                "device": device,
+                "n_agents": args.n_agents,
+                "observation_dim_per_agent": observation_dim_per_agent,  # Use calculated dimension
+                "action_dim_per_agent": env.action_space[0].shape[0],
+                "r_communication": args.r_communication,
+                "batch_size": args.batch_size,
+                "num_envs": args.num_envs,
+                "scenario_name": args.scenario_name,
+                "preprocessor": preprocessor,
+                "ratio": args.ratio,
+                "ratio_eval": args.ratio_eval,
+                # Add food collection specific params
+                "n_food": getattr(args, 'n_food', 5),
+                "obs_agents": getattr(args, 'obs_agents', True),
+            }
+        
+        return actor_config
 
-    """ Setup Q value networks """
-    if args.scenario_name == "grassland_vmas" or args.scenario_name == "adversarial_vmas":
-        qvalue_config = {
-            "device": device,
-            "n_agents": args.n_agents_good + args.n_agents_adversaries,
-            "observation_dim_per_agent": env.observation_space[0].shape[0],
-            "action_dim_per_agent": env.action_space[0].shape[0],
-            "scenario_name": args.scenario_name
-        }
-    else:
-        qvalue_config = {
-            "device": device,
-            "n_agents": args.n_agents,
-            "observation_dim_per_agent": env.observation_space[0].shape[0],
-            "action_dim_per_agent": env.action_space[0].shape[0],
-            "scenario_name": args.scenario_name
-        }
+    actor_config = setup_actor_config(args, env)
+
+    def setup_qvalue_config(args, env):
+        """Setup Q-value network configuration"""
+        
+        if args.scenario_name == "food_collection":
+            n_food = getattr(args, 'n_food', 5)
+            obs_agents = getattr(args, 'obs_agents', True)
+            observation_dim_per_agent = 4 + n_food * 2
+            if obs_agents:
+                observation_dim_per_agent += (args.n_agents - 1) * 2
+        elif args.scenario_name == "simple_spread":
+            observation_dim_per_agent = 6
+        else:
+            observation_dim_per_agent = env.observation_space[0].shape[0]
+
+        if args.scenario_name == "grassland_vmas" or args.scenario_name == "adversarial_vmas":
+            qvalue_config = {
+                "device": device,
+                "n_agents": args.n_agents_good + args.n_agents_adversaries,
+                "observation_dim_per_agent": observation_dim_per_agent,
+                "action_dim_per_agent": env.action_space[0].shape[0],
+                "scenario_name": args.scenario_name
+            }
+        else:
+            qvalue_config = {
+                "device": device,
+                "n_agents": args.n_agents,
+                "observation_dim_per_agent": observation_dim_per_agent,  # Use calculated dimension
+                "action_dim_per_agent": env.action_space[0].shape[0],
+                "scenario_name": args.scenario_name
+            }
+        
+        return qvalue_config
+    
+    qvalue_config = setup_qvalue_config(args, env)
 
     if args.neural_network_name == "MLP":
         actor_net = MLP_actor(actor_config)

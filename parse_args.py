@@ -4,6 +4,7 @@ Please, read the description of each argument.
 """
 
 import argparse
+from html import parser
 
 
 def none_or_str(value):
@@ -25,15 +26,13 @@ def parse_args():
     )
 
     """ Setup Environment """
-    # NOTE: removed `choices=` so we can pass either a built-in scenario name (e.g., 'food_collection')
-    # or a filesystem path to a custom scenario file (e.g., '/abs/path/food_collection.py').
-    parser.add_argument(
-        "--scenario_name",
-        type=str,
-        default="sampling",
-        help="Scenario name (e.g., 'simple_spread', 'food_collection') or path to a scenario .py file"
-    )
-
+    parser.add_argument("--scenario_name", type=str, default="sampling",
+                        choices=['reverse_transport', 'simple_spread',
+                                'sampling', 'grassland_vmas',
+                                'adversarial_vmas', 'simple_spread_food',
+                                'food_collection'],
+                        help="available scenarios")
+    
     parser.add_argument(
         "--num_envs",
         type=int,
@@ -91,30 +90,17 @@ def parse_args():
     )
 
     # ---------- New: food_collection-specific (and generally useful) knobs ----------
-    parser.add_argument(
-        "--n_food",
-        type=int,
-        default=5,
-        help="[food_collection] number of food items in the arena"
-    )
-    parser.add_argument(
-        "--respawn_food",
-        type=bool,
-        default=True,
-        help="[food_collection] whether collected food respawns"
-    )
-    parser.add_argument(
-        "--collection_radius",
-        type=float,
-        default=0.05,
-        help="[food_collection] radius within which agents collect food"
-    )
-    parser.add_argument(
-        "--obs_agents",
-        type=bool,
-        default=True,
-        help="If supported by the scenario, include other agents in the observation"
-    )
+    parser.add_argument("--n_food", type=int, default=5,
+                        help="number of food items in food collection environment")
+
+    parser.add_argument("--obs_agents", type=bool, default=True,
+                        help="whether agents observe other agents in food collection")
+
+    parser.add_argument("--collection_radius", type=float, default=0.05,
+                        help="radius for food collection")
+
+    parser.add_argument("--respawn_food", type=bool, default=True,
+                        help="whether to respawn food after collection")
     # -------------------------------------------------------------------------------
 
     """ Setup actor network """
