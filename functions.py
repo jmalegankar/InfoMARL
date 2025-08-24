@@ -409,7 +409,7 @@ class GSA_actor(nn.Module):
         self.device = actor_config["device"]
         self.na = actor_config["n_agents"]
         self.scenario_name = actor_config["scenario_name"]
-        if self.scenario_name == "simple_spread":
+        if self.scenario_name == "simple_spread" or self.scenario_name == "food_collection":
             self.observation_dim_per_agent = 6
         else:
             self.observation_dim_per_agent = actor_config["observation_dim_per_agent"]
@@ -443,7 +443,7 @@ class GSA_actor(nn.Module):
         return L
 
     def forward(self, x):
-        if self.scenario_name == "simple_spread":
+        if self.scenario_name == "simple_spread" or self.scenario_name == "food_collection":
             state = torch.zeros(x.shape[0], x.shape[1], self.observation_dim_per_agent, device=self.device)
             state[:, :, 0:4] = torch.clone(x[:, :, 0:4])
             for i in range(self.na):
@@ -503,7 +503,7 @@ class LEMURS_actor(nn.Module):
         self.num_envs = actor_config["num_envs"]
         self.na = actor_config["n_agents"]
         self.scenario_name = actor_config["scenario_name"]
-        if self.scenario_name == "simple_spread":
+        if self.scenario_name == "simple_spread" or self.scenario_name == "food_collection":
             self.observation_dim_per_agent = 6
         else:
             self.observation_dim_per_agent = actor_config["observation_dim_per_agent"]
@@ -577,7 +577,7 @@ class LEMURS_actor(nn.Module):
                                 ), dim=0)
 
         batch_size = x.shape[0]
-        if self.scenario_name == "simple_spread":
+        if self.scenario_name == "simple_spread" or self.scenario_name == "food_collection":
             state = torch.zeros(x.shape[0], x.shape[1], self.observation_dim_per_agent, device=self.device)
             state[:, :, 0:4] = torch.clone(x[:, :, 0:4])
             for i in range(self.na):
@@ -721,7 +721,7 @@ class PIMARL_actor(nn.Module):
         self.num_envs = actor_config["num_envs"]
         self.scenario_name = actor_config["scenario_name"]
         self.na = actor_config["n_agents"]
-        if self.scenario_name == "food_collection_vmas" or (self.scenario_name == "simple_spread_food" and not actor_config["preprocessor"]) or self.scenario_name == "simple_spread":
+        if self.scenario_name == "food_collection" or (self.scenario_name == "simple_spread_food" and not actor_config["preprocessor"]) or self.scenario_name == "simple_spread":
             self.observation_dim_per_agent = 6
         elif self.scenario_name == "grassland_vmas" or self.scenario_name == "adversarial_vmas":
             if actor_config["preprocessor"]:
@@ -822,7 +822,7 @@ class PIMARL_actor(nn.Module):
             state = torch.cat((x, self.preprocessor(x.repeat(1, self.na, 1).reshape(-1, self.na, 6), laplacian_base)), dim=2)
         elif (self.scenario_name == "grassland_vmas" or self.scenario_name == "adversarial_vmas") and self.prepro:
             state = torch.cat((x, self.preprocessor(x.repeat(1, self.na, 1).reshape(-1, self.na, 8), laplacian_base)), dim=2)
-        elif self.scenario_name == "simple_spread":
+        elif self.scenario_name == "simple_spread" or self.scenario_name == "food_collection":
             state = torch.zeros(x.shape[0], x.shape[1], self.observation_dim_per_agent, device=self.device)
             state[:, :, 0:4] = torch.clone(x[:, :, 0:4])
             state[:, :, 4:6] = torch.clone(x).reshape(x.shape[0], x.shape[1], -1, 2)[:, range(self.na), range(2, 2+self.na), :].reshape(x.shape[0], x.shape[1], -1)

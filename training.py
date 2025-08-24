@@ -42,7 +42,7 @@ def main(args):
             seed=args.seed,
             max_steps=args.max_steps,
             n_agents=args.n_agents,
-            n_food=getattr(args, "n_food", 5),
+            n_food=getattr(args, "n_food", args.n_agents),
             respawn_food=getattr(args, "respawn_food", True),
             collection_radius=getattr(args, "collection_radius", 0.05),
             obs_agents=getattr(args, "obs_agents", True)
@@ -57,7 +57,7 @@ def main(args):
             seed=args.seed,
             max_steps=args.max_frames_eval,
             n_agents=args.num_agents_eval,
-            n_food=getattr(args, "n_food", 5),
+            n_food=getattr(args, "n_food", args.n_agents),
             respawn_food=getattr(args, "respawn_food", True),
             collection_radius=getattr(args, "collection_radius", 0.05),
             obs_agents=getattr(args, "obs_agents", True)
@@ -99,17 +99,8 @@ def main(args):
     def setup_actor_config(args, env):
         """Calculate correct observation dimensions for different scenarios"""
         
-        # Calculate observation dimension based on scenario
-        if args.scenario_name == "food_collection":
-            # For food collection: pos(2) + vel(2) + food_positions(n_food*2) + other_agents((n_agents-1)*2)
-            n_food = getattr(args, 'n_food', 5)  # Default 5 food items
-            obs_agents = getattr(args, 'obs_agents', True)  # Default observe other agents
-            
-            observation_dim_per_agent = 4 + n_food * 2  # pos + vel + food positions
-            if obs_agents:
-                observation_dim_per_agent += (args.n_agents - 1) * 2  # other agents
                 
-        elif args.scenario_name == "simple_spread":
+        if args.scenario_name == "simple_spread" or args.scenario_name == "food_collection":
             observation_dim_per_agent = 6  # Fixed for simple spread
         elif args.scenario_name in ["grassland_vmas", "adversarial_vmas"]:
             observation_dim_per_agent = env.observation_space[0].shape[0]
@@ -145,7 +136,7 @@ def main(args):
                 "ratio": args.ratio,
                 "ratio_eval": args.ratio_eval,
                 # Add food collection specific params
-                "n_food": getattr(args, 'n_food', 5),
+                "n_food": getattr(args, 'n_food', args.n_agents),
                 "obs_agents": getattr(args, 'obs_agents', True),
             }
         
@@ -156,22 +147,13 @@ def main(args):
     def setup_qvalue_config(args, env):
         """Setup Q-value network configuration"""
         
-        if args.scenario_name == "food_collection":
-            n_food = getattr(args, 'n_food', 5)
-            obs_agents = getattr(args, 'obs_agents', True)
-            observation_dim_per_agent = 4 + n_food * 2
-            if obs_agents:
-                observation_dim_per_agent += (args.n_agents - 1) * 2
-        elif args.scenario_name == "simple_spread":
-            observation_dim_per_agent = 6
-        else:
-            observation_dim_per_agent = env.observation_space[0].shape[0]
+
 
         if args.scenario_name == "grassland_vmas" or args.scenario_name == "adversarial_vmas":
             qvalue_config = {
                 "device": device,
                 "n_agents": args.n_agents_good + args.n_agents_adversaries,
-                "observation_dim_per_agent": observation_dim_per_agent,
+                "observation_dim_per_agent": env.observation_space[0].shape[0],
                 "action_dim_per_agent": env.action_space[0].shape[0],
                 "scenario_name": args.scenario_name
             }
@@ -179,7 +161,7 @@ def main(args):
             qvalue_config = {
                 "device": device,
                 "n_agents": args.n_agents,
-                "observation_dim_per_agent": observation_dim_per_agent,  # Use calculated dimension
+                "observation_dim_per_agent": env.observation_space[0].shape[0],  # Use calculated dimension
                 "action_dim_per_agent": env.action_space[0].shape[0],
                 "scenario_name": args.scenario_name
             }
