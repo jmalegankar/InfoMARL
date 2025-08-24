@@ -67,6 +67,29 @@ def main(args):
             "ratio": args.ratio,
             "ratio_eval": args.ratio_eval
         }
+    elif args.scenario_name == "food_collection":
+        n_food = getattr(args, 'n_food', 5)  # Default 5 food items
+        obs_agents = getattr(args, 'obs_agents', True)  # Default observe other agents
+        
+        observation_dim_per_agent = 4 + n_food * 2  # pos + vel + food positions
+        if obs_agents:
+            observation_dim_per_agent += (args.n_agents - 1) * 2  # other agents
+        actor_config = {
+            "device": device,
+            "n_agents": args.n_agents,
+            "observation_dim_per_agent": observation_dim_per_agent,  # Use calculated dimension
+            "action_dim_per_agent": evaluation_env.action_space[0].shape[0],
+            "r_communication": args.r_communication,
+            "batch_size": args.batch_size,
+            "num_envs": args.num_envs,
+            "scenario_name": args.scenario_name,
+            "preprocessor": preprocessor,
+            "ratio": args.ratio,
+            "ratio_eval": args.ratio_eval,
+            # Add food collection specific params
+            "n_food": getattr(args, 'n_food', 5),
+            "obs_agents": getattr(args, 'obs_agents', True),
+        }
     else:
         actor_config = {
             "device": device,
