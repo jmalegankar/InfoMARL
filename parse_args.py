@@ -261,7 +261,7 @@ def parse_args():
     parser.add_argument(
         "--evaluation_interval",
         type=int,
-        default=10000,
+        default=100000,
         help="Total number of frames between two testing runs."
     )
 
