@@ -132,6 +132,7 @@ class RandomAgentPolicy(nn.Module):
         ).view(-1, self.number_agents, self.hidden_dim)
         # Create attention mask for cross attention
         agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1, 1))
+
         food_mask = food_mask.unsqueeze(-1)
 
         agent_emb, landmark_emb, cross_weights = self.agent_landmark(
@@ -140,6 +141,12 @@ class RandomAgentPolicy(nn.Module):
             landmark_embeddings,
             all_agents_embeddings,
             key_mask=agents_mask,
+        )
+        _, _, cross_weights = self.agent_landmark(
+            landmark_embeddings,
+            all_agents_embeddings,
+            landmark_embeddings,
+            all_agents_embeddings
         )
         
         if not self.training:
