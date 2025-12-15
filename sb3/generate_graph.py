@@ -246,7 +246,7 @@ def extract_file_info(filename: str) -> Tuple[str, str, int]:
     parts = basename.split('_')
     
     if len(parts) >= 3:
-        return parts[0], parts[1], int(parts[2])
+        return '_'.join(parts[:-2]), parts[-2], int(parts[-1])
     return 'unknown', 'unknown', 0
 
 def process_all_files_and_visualize(file_pattern: str, max_chunks_per_file: int = None):
@@ -320,12 +320,16 @@ def create_paper_style_visualization(results_data):
     # Method name mapping for display
     method_display_names = {
         'infomarl': 'Ours (InfoMARL)',
+        'infomarl_rnd': 'Ours rnd mask',
+        'infomarl_nomask': 'Ours w/o mask',
         'phmarl': 'phMARL', 
         'gsa': 'GSA'
     }
     
     colors = {
         'Ours (InfoMARL)': '#1f77b4',   # Blue
+        'Ours rnd mask' : '#17becf',    # Cyan
+        'Ours w/o mask': '#2ca02c',     # Green
         'phMARL': '#ff7f0e',            # Orange  
         'GSA': '#d62728'                # Red
     }
@@ -341,8 +345,8 @@ def create_paper_style_visualization(results_data):
     
     scenarios = sorted(all_scenarios)
     agent_counts = sorted(all_agent_counts)
-    methods = ['infomarl', 'phmarl', 'gsa']  # Use file method names
-    
+    methods = ['infomarl', 'phmarl', 'gsa', 'infomarl_rnd', 'infomarl_nomask']  # Use file method names
+
     print(f"Visualizing scenarios: {scenarios}")
     print(f"Agent counts: {agent_counts}")
     print(f"Available methods: {list(results_data.keys())}")
@@ -358,7 +362,7 @@ def create_paper_style_visualization(results_data):
     for idx, scenario in enumerate(scenarios):
         ax = axes[idx]
         
-        bar_width = 0.25
+        bar_width = 0.15
         x = np.array(range(len(agent_counts)))
         
         for i, method in enumerate(methods):
@@ -423,7 +427,7 @@ def main():
     
     # Process all files
     process_all_files_and_visualize(
-        file_pattern="/Users/jmalegaonkar/Desktop/InfoMARL-1/eval_data/*.dat",
+        file_pattern="/home/eval_data/*_collection*.dat",
         max_chunks_per_file=400  # Adjust as needed
     )
 
