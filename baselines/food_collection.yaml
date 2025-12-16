@@ -1,0 +1,20 @@
+# BenchMARL Task Configuration for Food Collection
+# Place this file in: benchmarl/conf/task/vmas/food_collection.yaml
+
+# Number of agents
+n_agents: 4
+
+# Number of food items
+n_food: 8
+
+# Whether food respawns after collection
+respawn_food: true
+
+# Collection radius (how close agent needs to be)
+collection_radius: 0.15
+
+# Whether agents can observe other agents
+obs_agents: true
+
+# Maximum episode steps
+max_steps: 200

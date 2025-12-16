@@ -1,65 +1,138 @@
-#!/usr/bin/env python3
 import argparse
-from benchmarl.algorithms import MappoConfig, MasacConfig, QmixConfig
+from benchmarl.algorithms import MappoConfig, MasacConfig
 from benchmarl.environments import VmasTask
 from benchmarl.experiment import Experiment, ExperimentConfig
 from benchmarl.models.mlp import MlpConfig
+from benchmarl.benchmark import Benchmark
 
-ALGO_MAP = {
-    "mappo": MappoConfig,
-    "masac": MasacConfig,
-    "qmix": QmixConfig,
-}
 
-VMAS_TASKS = [
-    "SIMPLE_SPREAD", "BALANCE", "NAVIGATION", "SAMPLING",
-    "TRANSPORT", "WHEEL", "DISCOVERY", "FLOCKING"
-]
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Benchmark MAPPO and MASAC on VMAS tasks"
+    )
+    parser.add_argument(
+        "--n_agents",
+        type=int,
+        nargs="+",
+        default=[3, 5],
+        help="Number of agents to test (can specify multiple values)",
+    )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=[0, 1, 2],
+        help="Random seeds for experiments",
+    )
+    parser.add_argument(
+        "--max_n_frames",
+        type=int,
+        default=1_000,
+        help="Maximum number of frames to collect",
+    )
+    parser.add_argument(
+        "--evaluation",
+        action="store_true",
+        help="Enable evaluation during training",
+    )
+    parser.add_argument(
+        "--loggers",
+        type=str,
+        nargs="+",
+        default=["csv"],
+        help="Loggers to use (e.g., wandb, csv, tensorboard)",
+    )
+    parser.add_argument(
+        "--save_folder",
+        type=str,
+        default=None,
+        help="Folder to save results (default: current directory)",
+    )
+    return parser.parse_args()
 
-def train_baseline(task_name, algo_name, seed=0):
-    # 1. Get configurations from YAML
-    task = getattr(VmasTask, task_name).get_from_yaml()
-    algo_config = ALGO_MAP[algo_name].get_from_yaml()
-    model_config = MlpConfig.get_from_yaml()
+
+def create_task_configs(n_agents_list):
+    """Create task configurations for different agent counts."""
+    task_configs = []
+    
+    for n_agents in n_agents_list:
+        # # Simple Spread task
+        # simple_spread = VmasTask.SIMPLE_SPREAD.get_from_yaml()
+        # simple_spread.config["n_agents"] = n_agents
+        # task_configs.append(simple_spread)
+        
+        # # Reverse Transport task
+        # reverse_transport = VmasTask.REVERSE_TRANSPORT.get_from_yaml()
+        # reverse_transport.config["n_agents"] = n_agents
+        # task_configs.append(reverse_transport)
+
+        food_collection = VmasTask.FOOD_COLLECTION.get_from_yaml()
+        food_collection.config["n_agents"] = n_agents
+        task_configs.append(food_collection)
+    
+    return task_configs
+
+
+def run_benchmark(args):
+    """Run the benchmark with specified configuration."""
+    
+    # Create experiment configuration
     experiment_config = ExperimentConfig.get_from_yaml()
+    experiment_config.max_n_frames = args.max_n_frames
+    experiment_config.evaluation = args.evaluation
+    experiment_config.loggers = args.loggers
     
-    # 2. Configure EXPERIMENT parameters as needed
-    experiment_config.max_n_iters = 500
-    experiment_config.lr = 3e-4
-    experiment_config.gamma = 0.99
-    experiment_config.logger = "tensorboard"
-    experiment_config.logger_config = {
-        "project_name": "benchmarl_vmas",  
-        "log_dir": "results/tensorboard_logs",
-        "create_unique_dir": True,
-    }
+    if args.save_folder:
+        experiment_config.save_folder = args.save_folder
     
-    # 3. Algorithm-specific experiment settings
-    if algo_name in ["mappo"]:  # On-policy
-        experiment_config.on_policy_collected_frames_per_batch = 6000
-        experiment_config.on_policy_n_minibatch_iters = 15
-    else:  # Off-policy (MASAC, QMIX)
-        experiment_config.off_policy_collected_frames_per_batch = 1000
-        experiment_config.off_policy_n_optimizer_steps = 100
+    # Create algorithm configurations
+    algorithm_configs = [
+        MappoConfig.get_from_yaml(),
+        MasacConfig.get_from_yaml(),
+    ]
     
-    # 4. Create and run experiment
-    experiment = Experiment(
-        task=task,
-        algorithm_config=algo_config,
+    # Create task configurations with different agent counts
+    task_configs = create_task_configs(args.n_agents)
+    
+    # Create model configurations
+    model_config = MlpConfig.get_from_yaml()
+    critic_model_config = MlpConfig.get_from_yaml()
+    
+    # Create and run benchmark
+    print(f"\n{'='*80}")
+    print("Starting BenchMARL Benchmark")
+    print(f"{'='*80}")
+    print(f"Algorithms: MAPPO, MASAC")
+    print(f"Tasks: simple_spread, reverse_transport, food_collection")
+    print(f"Agent counts: {args.n_agents}")
+    print(f"Seeds: {args.seeds}")
+    print(f"Max frames: {args.max_n_frames:,}")
+    print(f"Loggers: {args.loggers}")
+    print(f"{'='*80}\n")
+    
+    benchmark = Benchmark(
+        algorithm_configs=algorithm_configs,
+        tasks=task_configs,
+        seeds=set(args.seeds),
+        experiment_config=experiment_config,
         model_config=model_config,
-        critic_model_config=MlpConfig.get_from_yaml() if algo_name in ["mappo", "masac"] else None,
-        seed=seed,
-        config=experiment_config,
+        critic_model_config=critic_model_config,
     )
     
-    experiment.run()
-    print(f"Completed {algo_name.upper()} on {task_name} (seed={seed})")
+    # Run experiments sequentially
+    benchmark.run_sequential()
+    
+    print(f"\n{'='*80}")
+    print("Benchmark completed!")
+    print(f"{'='*80}\n")
+
+
+def main():
+    """Main entry point."""
+    args = parse_args()
+    run_benchmark(args)
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--task", type=str, default="SIMPLE_SPREAD", choices=VMAS_TASKS)
-    parser.add_argument("--algo", type=str, default="mappo", choices=list(ALGO_MAP.keys()))
-    parser.add_argument("--seed", type=int, default=0)
-    args = parser.parse_args()
-    
-    train_baseline(args.task, args.algo, args.seed)
+    main()
