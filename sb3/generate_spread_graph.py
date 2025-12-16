@@ -1,19 +1,3 @@
-#!/usr/bin/env python3
-"""
-spread_eval_aggregate.py
-
-Reads a directory of VMAS simple_spread .dat (CBOR) files and:
-  • Validates each file is for scenario == "simple_spread" (from chunk 1)
-  • Builds a batched env (num_envs from chunk 1), reads max_steps (chunk 2)
-  • Vectorized single loop over steps to accumulate TEAM rewards per env
-  • Normalizes episodic return per robot (/ N_agents)
-  • Aggregates stats by (method, n_agents)
-  • Saves spread_results.json / .csv and a comparison plot (SVG + PNG)
-
-Usage:
-  python spread_eval_aggregate.py --eval_dir ./eval_data --device auto
-"""
-
 import argparse
 import glob
 import json

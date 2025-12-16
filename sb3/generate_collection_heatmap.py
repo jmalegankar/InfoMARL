@@ -1,19 +1,3 @@
-#!/usr/bin/env python3
-"""
-food_infomarl_heatmap.py
-
-Reads a directory of VMAS food_collection .dat (CBOR) files and:
-  • Keeps ONLY InfoMARL runs (filenames containing "infomarl")
-  • Validates each file is for scenario == "food_collection"
-  • Builds a batched env, replays positions, recomputes rewards
-  • Normalizes episodic return per robot (/ N_agents)
-  • Aggregates stats by (n_agents, n_food)
-  • Saves food_infomarl.json / .csv and a heatmap (SVG + PNG)
-
-Usage:
-  python food_infomarl_heatmap.py --eval_dir ./eval_data
-"""
-
 import argparse
 import glob
 import json

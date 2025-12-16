@@ -1,20 +1,3 @@
-#!/usr/bin/env python3
-"""
-food_eval_aggregate.py
-
-Reads a directory of VMAS food_collection .dat (CBOR) files and:
-  • Validates each file is for scenario == "food_collection" (chunk 1)
-  • Keeps ONLY files where n_food == n_agents
-  • Builds a batched env (num_envs from chunk 1), reads max_steps (chunk 2)
-  • Vectorized single loop over steps to accumulate TEAM rewards per env
-  • Normalizes episodic return per robot (/ N_agents)
-  • Aggregates stats by (method, n_agents)
-  • Saves food_results.json / .csv and a comparison plot (SVG + PNG)
-
-Usage:
-  python food_eval_aggregate.py --eval_dir ./eval_data --device auto
-"""
-
 import argparse
 import glob
 import json
