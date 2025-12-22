@@ -30,15 +30,19 @@ plt.rcParams.update({
 # ---------- Method display & colors ----------
 METHOD_DISPLAY = {
     'infomarl': 'Ours',
+    'infomarl_rnd': 'Ours rnd mask',
+    'infomarl_nomask': 'Ours w/o mask',
     'gsa': 'GSA',
     'ph-marl': 'pH-MARL',
 }
 METHOD_COLORS = {
     'Ours':   '#2E86AB',  # Blue
+    'Ours rnd mask' : '#17becf',    # Cyan
+    'Ours w/o mask': '#2ca02c',     # Green
     'GSA':    '#F18F01',  # Orange
     'pH-MARL':'#A23B72',  # Purple
 }
-PLOT_ORDER = ['Ours', 'GSA', 'pH-MARL']  # requested order
+PLOT_ORDER = ['Ours', 'Ours rnd mask', 'Ours w/o mask', 'GSA', 'pH-MARL']  # requested order
 
 # ---------- Core per-file compute (vectorized single-loop) ----------
 def fast_compute_rewards_food(path: str, normalize_per_robot: bool = True, normalize_per_robot_square: bool = False):
@@ -224,7 +228,7 @@ def plot_results(results: Dict) -> None:
 
     fig, ax = plt.subplots(figsize=(8.4, 5.2))
     x = np.arange(len(agent_counts))
-    width = 0.26
+    width = 0.15
 
     for i, m in enumerate(methods):
         means, stds = [], []
