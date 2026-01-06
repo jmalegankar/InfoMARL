@@ -1,5 +1,5 @@
 import policy
-import vmas
+import smaclite
 import wrapper
 
 from stable_baselines3 import PPO
@@ -9,20 +9,12 @@ import os
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-env = vmas.make_env(
-    scenario="food_collection",
-    n_food=6,
-    n_agents=4,
+env = wrapper.SMACVecEnv(
+    env_name="smaclite/2s3z-v0",
     num_envs=64,
-    continuous_actions=True,
-    max_steps=400,
-    seed=42,
-    device=device,
-    terminated_truncated=False,
-    respawn_food=True,
+    max_steps=108000,
+    rnd_nums=True,
 )
-
-env = wrapper.VMASVecEnv(env, rnd_nums=True)
 obs = env.reset()
 
 if os.path.exists("ppo_infomarl.zip"):

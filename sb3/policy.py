@@ -19,42 +19,31 @@ def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs,
     permuted_rand = torch.gather(expanded_rand, dim=2, index=permutation_indices.unsqueeze(0).expand(num_envs, -1, -1))
     return permuted_rand
 
-def env_parser(obs:torch.Tensor, number_agents:int):
-    random_numbers = obs[..., -1]
-    obs = obs.view(-1, obs.shape[-1])
-    cur_pos = obs[: ,0:2]
-    cur_vel = obs[: ,2:4]
-    landmarks = obs[:, 4:4 + 2 * number_agents].contiguous().reshape(-1, number_agents, 2)
-    other_agents = obs[:, 4 + 2 * number_agents:-1].contiguous().reshape(-1, (number_agents - 1), 2)
-    return cur_pos, cur_vel, landmarks, other_agents, random_numbers
-
-def env_parser_food(obs: torch.Tensor, number_agents: int, number_food: int):
+def env_parser(obs: torch.Tensor, number_agents: int, number_food: int, agent_dim: int, landmark_dim: int):
     """
     Parse observations from food collection environment.
     
     Observation structure per agent:
-    - Agent position (2)
-    - Agent velocity (2)
-    - Food relative positions (number_food * 2)
-    - Other agents relative positions (number_agents - 1) * 2
-    - Other agents relative velocities (number_agents - 1) * 2
+    - Agent move possibitlity (4)
+    - Enemy/Food data (number_food * landmark_dim)
+    - Other agents data ((number_agents - 1) * agent_dim)
+    - Agent heatlh , sheild, unit type (3)
     - Random number (1) if using rnd_nums wrapper
     """
     random_numbers = obs[..., -1]
-    obs = obs.view(-1, obs.shape[-1])
-    cur_pos = torch.zeros_like(obs[:, 0:2])
-    cur_vel = obs[:, 2:4]
-    food = obs[:, 4:4 + number_food * 2].contiguous().view(-1, number_food, 2)
-    other_agents = obs[:, 4 + number_food * 2:-1].contiguous().view(-1, (number_agents - 1), 2)
-    food_mask = (food == -999.0).any(dim=-1)
+    obs = obs[..., :-1]
+    cur_agent_vec = torch.cat((
+        obs[..., :4],
+        obs[..., -(agent_dim -4):],
+    ), dim=-1).view(-1, agent_dim)
+    landmarks_start = 4
+    landmarks_end = landmarks_start + number_food * landmark_dim
+    landmarks = obs[..., landmarks_start:landmarks_end].view(-1, number_agents, number_food, landmark_dim)
+    other_agents_start = landmarks_end
+    other_agents_end = other_agents_start + (number_agents - 1) * agent_dim
+    other_agents = obs[..., other_agents_start:other_agents_end].view(-1, number_agents - 1, agent_dim)
 
-    if number_agents == 1:
-        food = food.unsqueeze(-2)
-        other_agents = other_agents.unsqueeze(-2)
-        num_envs = cur_pos.shape[0]
-        return cur_pos.view(num_envs, 2), cur_vel.view(num_envs, 2), food.contiguous(), other_agents.contiguous().view(num_envs, 0, 2), random_numbers, food_mask
-    else:
-        return cur_pos, cur_vel, food, other_agents, random_numbers, food_mask
+    return cur_agent_vec, landmarks, other_agents, random_numbers
 
 
 class RandomAgentPolicy(nn.Module):
@@ -69,14 +58,14 @@ class RandomAgentPolicy(nn.Module):
 
         # Network architecture for processing agent observations
         self.cur_agent_embedding = nn.Sequential(
-            nn.Linear(self.agent_dim * 2, self.hidden_dim),
+            nn.Linear(self.agent_dim, self.hidden_dim),
             nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
         
         # Network architecture for processing landmark positions
         self.landmark_embedding = nn.Sequential(
-            nn.Linear(landmark_dim, self.hidden_dim),
+            nn.Linear(self.landmark_dim, self.hidden_dim),
             nn.SiLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
@@ -101,38 +90,41 @@ class RandomAgentPolicy(nn.Module):
             dropout=0.0,
         )
 
-        self.cur_landmark = DiamondAttention(
-            hidden_dim=self.hidden_dim,
-            num_heads=1,
-            dropout=0.0,
+        self.agent_processor = nn.Sequential(
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, 6),
+        )
+
+        self.cur_landmark = nn.Sequential(
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.hidden_dim, 1),
         )
 
     def forward(self, obs):
         """Extract features from observations using the attention mechanism"""
-        cur_pos, cur_vel, landmarks, other_agents, random_numbers, food_mask = env_parser_food(obs, self.number_agents, self.number_food)
+        cur_agent, landmarks, other_agents, random_numbers = env_parser(obs, self.number_agents, self.number_food, self.agent_dim, self.landmark_dim)
 
         random_numbers = get_permuted_env_random_numbers(
-            random_numbers, self.number_agents, obs.shape[0], cur_pos.device
+            random_numbers, self.number_agents, obs.shape[0], cur_agent.device
         ).view(-1, self.number_agents)
 
-        cur_agent = torch.cat((cur_pos, cur_vel), dim=-1)
-        all_agents_list = torch.cat((cur_pos.unsqueeze(1), other_agents), dim=1)
-
+        all_agents_list = torch.cat((cur_agent.unsqueeze(1), other_agents), dim=1)
         # Encode current agent
         cur_agent_embeddings = self.cur_agent_embedding(cur_agent)
         
         # Encode landmarks
         landmark_embeddings = self.landmark_embedding(
-            landmarks.view(-1, 2)
+            landmarks.reshape(-1, self.landmark_dim)
         ).view(-1, self.number_food, self.hidden_dim)
         
         # Encode all agents
         all_agents_embeddings = self.all_agent_embedding(
-            all_agents_list.view(-1, 2)
+            all_agents_list.view(-1, self.agent_dim)
         ).view(-1, self.number_agents, self.hidden_dim)
         # Create attention mask for cross attention
         agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1, 1))
-        food_mask = food_mask.unsqueeze(-1)
 
         agent_emb, landmark_emb, cross_weights = self.agent_landmark(
             landmark_embeddings,
@@ -147,17 +139,7 @@ class RandomAgentPolicy(nn.Module):
         else:
             del cross_weights
 
-        _, landmark_emb, landmark_weights = self.cur_landmark(
-            cur_agent_embeddings.unsqueeze(1),
-            landmark_embeddings,
-            cur_agent_embeddings.unsqueeze(1),
-            landmark_embeddings,
-        )
-
-        if not self.training:
-            self.landmark_attention_weights = landmark_weights
-        else:
-            del landmark_weights
+        landmark_emb = self.cur_landmark(landmark_emb).view(-1, self.number_food) # (batch_size * num_agents, number_food)
 
         _, cur_agent_embeddings, _ = self.cur_agent(
             cur_agent_embeddings.unsqueeze(1),
@@ -167,20 +149,28 @@ class RandomAgentPolicy(nn.Module):
             key_mask=agents_mask,
         )
 
-        # Concatenate features for final processing
-        latent = torch.cat((cur_agent_embeddings.squeeze(1), landmark_emb.squeeze(1)), dim=-1)
+        cur_agent_embeddings = self.agent_processor(cur_agent_embeddings.squeeze(1)) # (batch_size * num_agents, 6)
 
-        return latent.view(-1, self.number_agents, self.hidden_dim*2)
+        # Concatenate features for final processing
+        latent = torch.cat((cur_agent_embeddings, landmark_emb), dim=-1)
+
+        return latent.view(-1, self.number_agents, 6 + self.number_food)
 
 
 class CriticPolicy(nn.Module):
-    def __init__(self, obs_size, hidden_dim):
+    def __init__(self, obs_size, hidden_dim, out_size):
         super().__init__()
         self.obs_size = obs_size
         self.layer = nn.Sequential(
             nn.Linear(obs_size, hidden_dim*2),
             nn.SiLU(),
             nn.Linear(hidden_dim*2, hidden_dim*2),
+            nn.SiLU(),
+            nn.Linear(hidden_dim*2, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, out_size),
             nn.SiLU(),
         )
     
@@ -201,18 +191,19 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
     def __init__(
         self,
         observation_space,
-        agent_dim=2,
-        landmark_dim=2,
+        agent_dim=8,
+        landmark_dim=8,
         hidden_dim=64,
         critic=False,
     ):
-        super(InfoMARLExtractor, self).__init__(observation_space, hidden_dim*2)
         self.n_agents = observation_space.shape[0]
-        self.n_food = (observation_space.shape[1] - ((self.n_agents - 1) * 2) - 5) // 2
+        self.n_food = (observation_space.shape[1] - self.n_agents * agent_dim - 1) // landmark_dim
+        super(InfoMARLExtractor, self).__init__(observation_space, 6 + self.n_food)
         if critic:
             self.critic = CriticPolicy(
                 obs_size=self.n_agents*(observation_space.shape[-1]-1),
                 hidden_dim=hidden_dim,
+                out_size=6 + self.n_food,
             )
         else:
             self.actor = RandomAgentPolicy(
@@ -288,7 +279,7 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
 
         # Default network architecture, from stable-baselines
         if net_arch is None:
-            net_arch = dict(pi=[64, 64], vf=[64, 64])
+            net_arch = dict(pi=[], vf=[])
 
         self.net_arch = net_arch
         self.activation_fn = activation_fn
@@ -331,7 +322,6 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
     def _build(self, lr_schedule):
         super()._build(lr_schedule)
         self.action_net = nn.Sequential(
-            nn.Linear(self.mlp_extractor.latent_dim_pi, self.action_space.shape[-1]),
             nn.Flatten(),
         )
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]
