@@ -106,8 +106,8 @@ def main():
 
     ss_model = "models_cpm/simple_spread/cpm_simple_spread/run1/model.pt"
     ss_best_model = "models_cpm/simple_spread/cpm_simple_spread/run1/model_best.pt"
-    fc_model = "models_cpm/food_collection/cpm_food_collection/run2/model.pt"
-    fc_best_model = "models_cpm/food_collection/cpm_food_collection/run2/model_best.pt"
+    fc_model = "models_cpm/food_collection/cpm_food_collection/run1/model.pt"
+    fc_best_model = "models_cpm/food_collection/cpm_food_collection/run1/model_best.pt"
 
     # Check simple spread models
     ss_exists, ss_msg = check_model_file(ss_model)
@@ -145,7 +145,7 @@ def main():
     print("-" * 60)
 
     ss_log = Path("models_cpm/simple_spread/cpm_simple_spread/run1/logs")
-    fc_log = Path("models_cpm/food_collection/cpm_food_collection/run2/logs")
+    fc_log = Path("models_cpm/food_collection/cpm_food_collection/run1/logs")
 
     if ss_log.exists() and any(ss_log.iterdir()):
         print(f"✓ Simple spread logs: {ss_log}")
@@ -188,14 +188,30 @@ def main():
     print("✅ ALL TESTS PASSED!")
     print("=" * 60)
     print(f"\nTests passed: {tests_passed}/{tests_total}")
-    print("\nModels saved to:")
-    print(f"  - {ss_model}")
-    print(f"  - {fc_model}")
-    print("\nView training curves:")
+    print("\n🎯 Verified Features:")
+    print("  ✓ Basic CPM training on VMAS environments")
+    print("  ✓ Evaluation mode (without exploration noise)")
+    print("  ✓ Reward normalization option")
+    print("  ✓ Best model saving based on eval performance")
+    print("  ✓ Enhanced logging (buffer size, num updates, eval metrics)")
+    print("\n📁 Models saved to:")
+    print(f"  - Final: {ss_model}")
+    print(f"  - Best:  {ss_best_model}")
+    print(f"  - Final: {fc_model}")
+    print(f"  - Best:  {fc_best_model}")
+    print("\n📊 View training curves:")
     print("  tensorboard --logdir models_cpm/")
-    print("\nYou can now run full training experiments.")
+    print("\n  Metrics to look for:")
+    print("    - sum_episode_rewards (training)")
+    print("    - eval/mean_reward (evaluation without exploration)")
+    print("    - training/buffer_size")
+    print("    - training/num_updates")
+    print("    - agent*/mean_episode_rewards")
+    print("\n✨ You can now run full training experiments with:")
+    print("  python train.py --scenario simple_spread --n_agents 4 \\")
+    print("                  --n_episodes 50000 --eval_interval 500")
     print()
-    
+
     return True
 
 
