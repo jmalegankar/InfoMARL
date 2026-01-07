@@ -19,158 +19,141 @@ def get_permuted_env_random_numbers(env_random_numbers, number_agents, num_envs,
     permuted_rand = torch.gather(expanded_rand, dim=2, index=permutation_indices.unsqueeze(0).expand(num_envs, -1, -1))
     return permuted_rand
 
-def env_parser(obs:torch.Tensor, number_agents:int):
-    random_numbers = obs[..., -1]
-    obs = obs.view(-1, obs.shape[-1])
-    cur_pos = obs[: ,0:2]
-    cur_vel = obs[: ,2:4]
-    landmarks = obs[:, 4:4 + 2 * number_agents].contiguous().reshape(-1, number_agents, 2)
-    other_agents = obs[:, 4 + 2 * number_agents:-1].contiguous().reshape(-1, (number_agents - 1), 2)
-    return cur_pos, cur_vel, landmarks, other_agents, random_numbers
 
-def env_parser_food(obs: torch.Tensor, number_agents: int, number_food: int):
+def env_parser_multi_give_way(obs: torch.Tensor, number_agents: int):
     """
-    Parse observations from food collection environment.
+    Parse observations from multi_give_way environment.
     
-    Observation structure per agent:
+    Observation structure per agent (from source code):
     - Agent position (2)
     - Agent velocity (2)
-    - Food relative positions (number_food * 2)
-    - Other agents relative positions (number_agents - 1) * 2
-    - Other agents relative velocities (number_agents - 1) * 2
+    - Relative position to goal (2)
+    - Distance to goal (1)
     - Random number (1) if using rnd_nums wrapper
+    
+    Total: 8 dimensions per agent
     """
     random_numbers = obs[..., -1]
     obs = obs.view(-1, obs.shape[-1])
-    cur_pos = torch.zeros_like(obs[:, 0:2])
+    
+    cur_pos = obs[:, 0:2]
     cur_vel = obs[:, 2:4]
-    food = obs[:, 4:4 + number_food * 2].contiguous().view(-1, number_food, 2)
-    other_agents = obs[:, 4 + number_food * 2:-1].contiguous().view(-1, (number_agents - 1), 2)
-    food_mask = (food == -999.0).any(dim=-1)
-
-    if number_agents == 1:
-        food = food.unsqueeze(-2)
-        other_agents = other_agents.unsqueeze(-2)
-        num_envs = cur_pos.shape[0]
-        return cur_pos.view(num_envs, 2), cur_vel.view(num_envs, 2), food.contiguous(), other_agents.contiguous().view(num_envs, 0, 2), random_numbers, food_mask
-    else:
-        return cur_pos, cur_vel, food, other_agents, random_numbers, food_mask
+    goal_rel_pos = obs[:, 4:6]
+    goal_distance = obs[:, 6:7]
+    
+    return cur_pos, cur_vel, goal_rel_pos, goal_distance, random_numbers
 
 
 class RandomAgentPolicy(nn.Module):
-    def __init__(self, number_agents, number_food, agent_dim, landmark_dim, hidden_dim):
+    def __init__(self, number_agents, agent_dim, goal_dim, hidden_dim):
         super().__init__()
         self.number_agents = number_agents
-        self.agent_dim = agent_dim
-        self.landmark_dim = landmark_dim
-        self.number_food = number_food
         self.hidden_dim = hidden_dim
-        self.training = True  # Add this to control behavior
-
-        # Network architecture for processing agent observations
+        self.training = True
+        
+        # Network for processing current agent (pos + vel)
         self.cur_agent_embedding = nn.Sequential(
-            nn.Linear(self.agent_dim * 2, self.hidden_dim),
+            nn.Linear(agent_dim * 2, hidden_dim),
             nn.SiLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
         )
         
-        # Network architecture for processing landmark positions
-        self.landmark_embedding = nn.Sequential(
-            nn.Linear(landmark_dim, self.hidden_dim),
+        # Network for processing goal information (rel_pos + distance)
+        self.goal_embedding = nn.Sequential(
+            nn.Linear(goal_dim + 1, hidden_dim),  # +1 for distance
             nn.SiLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
         )
-       
-        # Network for processing all agents' positions
-        self.all_agent_embedding = nn.Sequential(
-            nn.Linear(self.agent_dim, self.hidden_dim),
+        
+        # Network to create "virtual" self-representations at different hierarchy levels
+        # This allows the agent to reason about "cautious me" vs "aggressive me"
+        self.self_hierarchy_projection = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
         )
-
-        # Diamond attention mechanism for cross attention
-        self.agent_landmark = DiamondAttention(
-            hidden_dim=self.hidden_dim,
+        
+        # Diamond attention for self-modulation based on hierarchy
+        self.self_attention = DiamondAttention(
+            hidden_dim=hidden_dim,
             num_heads=1,
             dropout=0.0,
         )
-
-        self.cur_agent = DiamondAttention(
-            hidden_dim=self.hidden_dim,
+        
+        # Goal attention
+        self.goal_attention = DiamondAttention(
+            hidden_dim=hidden_dim,
             num_heads=1,
             dropout=0.0,
         )
-
-        self.cur_landmark = DiamondAttention(
-            hidden_dim=self.hidden_dim,
-            num_heads=1,
-            dropout=0.0,
-        )
-
+    
     def forward(self, obs):
         """Extract features from observations using the attention mechanism"""
-        cur_pos, cur_vel, landmarks, other_agents, random_numbers, food_mask = env_parser_food(obs, self.number_agents, self.number_food)
-
-        random_numbers = get_permuted_env_random_numbers(
-            random_numbers, self.number_agents, obs.shape[0], cur_pos.device
+        num_envs = obs.shape[0]
+        
+        cur_pos, cur_vel, goal_rel_pos, goal_distance, random_numbers = \
+            env_parser_multi_give_way(obs, self.number_agents)
+        
+        # Get permuted random numbers for hierarchy
+        random_numbers_permuted = get_permuted_env_random_numbers(
+            random_numbers, self.number_agents, num_envs, cur_pos.device
         ).view(-1, self.number_agents)
-
+        
+        # Prepare current agent features
         cur_agent = torch.cat((cur_pos, cur_vel), dim=-1)
-        all_agents_list = torch.cat((cur_pos.unsqueeze(1), other_agents), dim=1)
-
-        # Encode current agent
-        cur_agent_embeddings = self.cur_agent_embedding(cur_agent)
         
-        # Encode landmarks
-        landmark_embeddings = self.landmark_embedding(
-            landmarks.view(-1, 2)
-        ).view(-1, self.number_food, self.hidden_dim)
+        # Prepare goal features  
+        goal_features = torch.cat((goal_rel_pos, goal_distance), dim=-1)
         
-        # Encode all agents
-        all_agents_embeddings = self.all_agent_embedding(
-            all_agents_list.view(-1, 2)
-        ).view(-1, self.number_agents, self.hidden_dim)
-        # Create attention mask for cross attention
-        agents_mask = ~(random_numbers >= random_numbers[:, 0].view(-1, 1))
-        food_mask = food_mask.unsqueeze(-1)
-
-        agent_emb, landmark_emb, cross_weights = self.agent_landmark(
-            landmark_embeddings,
-            all_agents_embeddings,
-            landmark_embeddings,
-            all_agents_embeddings,
-            key_mask=agents_mask,
+        # Encode current agent and goal
+        cur_agent_embeddings = self.cur_agent_embedding(cur_agent)  # (batch*agents, hidden)
+        goal_embeddings = self.goal_embedding(goal_features)  # (batch*agents, hidden)
+        
+        # Create "virtual" representations of self at different hierarchy levels
+        # based on hierarchy
+        self_hierarchy_reps = self.self_hierarchy_projection(cur_agent_embeddings)
+        
+        # Reshape for attention (batch*agents, n_agents, hidden)
+        # Each agent gets n_agents copies of its own representation
+        self_hierarchy_reps = self_hierarchy_reps.unsqueeze(1).expand(-1, self.number_agents, -1)
+        
+        # Create hierarchy mask: agents mask representations with higher random numbers
+        hierarchy_mask = ~(random_numbers_permuted >= random_numbers_permuted[:, 0].view(-1, 1))
+        
+        # Self-attention with hierarchy mask
+        # This modulates the agent's confidence based on its hierarchy position
+        cur_agent_for_attn = cur_agent_embeddings.unsqueeze(1)  # (batch*agents, 1, hidden)
+        _, agent_modulated, self_weights = self.self_attention(
+            cur_agent_for_attn,
+            self_hierarchy_reps,
+            cur_agent_for_attn,
+            self_hierarchy_reps,
+            key_mask=hierarchy_mask,
         )
         
         if not self.training:
-            self.cross_attention_weights = cross_weights
+            self.self_attention_weights = self_weights
         else:
-            del cross_weights
-
-        _, landmark_emb, landmark_weights = self.cur_landmark(
-            cur_agent_embeddings.unsqueeze(1),
-            landmark_embeddings,
-            cur_agent_embeddings.unsqueeze(1),
-            landmark_embeddings,
+            del self_weights
+        
+        # Goal attention
+        goal_for_attn = goal_embeddings.unsqueeze(1)  # (batch*agents, 1, hidden)
+        _, goal_refined, goal_weights = self.goal_attention(
+            agent_modulated,
+            goal_for_attn,
+            agent_modulated,
+            goal_for_attn,
         )
-
+        
         if not self.training:
-            self.landmark_attention_weights = landmark_weights
+            self.goal_attention_weights = goal_weights
         else:
-            del landmark_weights
-
-        _, cur_agent_embeddings, _ = self.cur_agent(
-            cur_agent_embeddings.unsqueeze(1),
-            agent_emb,
-            cur_agent_embeddings.unsqueeze(1),
-            agent_emb,
-            key_mask=agents_mask,
-        )
-
+            del goal_weights
+        
         # Concatenate features for final processing
-        latent = torch.cat((cur_agent_embeddings.squeeze(1), landmark_emb.squeeze(1)), dim=-1)
-
-        return latent.view(-1, self.number_agents, self.hidden_dim*2)
+        latent = torch.cat((agent_modulated.squeeze(1), goal_refined.squeeze(1)), dim=-1)
+        
+        return latent.view(num_envs, self.number_agents, self.hidden_dim * 2)
 
 
 class CriticPolicy(nn.Module):
@@ -190,40 +173,37 @@ class CriticPolicy(nn.Module):
         obs = self.layer(obs)
         return obs
 
+
 class InfoMARLExtractor(BaseFeaturesExtractor):
     """
-    Custom feature extractor for InfoMARL.
+    Custom feature extractor for InfoMARL on multi_give_way scenario.
 
-    Observation space is expected to be (n_agents, n_features+1).
-    The last entry is the random number of the agent.
     """
-
+    
     def __init__(
         self,
         observation_space,
         agent_dim=2,
-        landmark_dim=2,
+        goal_dim=2,
         hidden_dim=64,
         critic=False,
     ):
         super(InfoMARLExtractor, self).__init__(observation_space, hidden_dim*2)
         self.n_agents = observation_space.shape[0]
-        self.n_food = (observation_space.shape[1] - ((self.n_agents - 1) * 2) - 5) // 2
+        
         if critic:
             self.critic = CriticPolicy(
-                obs_size=self.n_agents*(observation_space.shape[-1]-1),
+                obs_size=self.n_agents * (observation_space.shape[-1] - 1),
                 hidden_dim=hidden_dim,
             )
         else:
             self.actor = RandomAgentPolicy(
                 number_agents=self.n_agents,
-                number_food=self.n_food,
                 agent_dim=agent_dim,
-                landmark_dim=landmark_dim,
+                goal_dim=goal_dim,
                 hidden_dim=hidden_dim,
             )
-
-
+    
     def forward(self, observations):
         """
         Forward pass through the feature extractor.
@@ -234,36 +214,34 @@ class InfoMARLExtractor(BaseFeaturesExtractor):
             return self.actor(observations)
 
 
-from stable_baselines3.common.distributions import (
-    make_proba_distribution,
-)
+from stable_baselines3.common.distributions import make_proba_distribution
+
 
 class InfoMARLActorCriticPolicy(ActorCriticPolicy):
     def __init__(
         self,
         observation_space,
         action_space,
-        lr_schedule = 3e-4,
-        net_arch = None,
-        activation_fn = nn.Tanh,
+        lr_schedule=3e-4,
+        net_arch=None,
+        activation_fn=nn.Tanh,
         ortho_init: bool = True,
         use_sde: bool = False,
         log_std_init: float = 0.0,
         full_std: bool = True,
         use_expln: bool = False,
         squash_output: bool = False,
-        features_extractor_class = InfoMARLExtractor,
-        features_extractor_kwargs = None,
+        features_extractor_class=InfoMARLExtractor,
+        features_extractor_kwargs=None,
         normalize_images: bool = True,
-        optimizer_class = torch.optim.Adam,
-        optimizer_kwargs = None,
+        optimizer_class=torch.optim.Adam,
+        optimizer_kwargs=None,
     ):
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
-            # Small values to avoid NaN in Adam optimizer
             if optimizer_class == torch.optim.Adam:
                 optimizer_kwargs["eps"] = 1e-5
-
+        
         BasePolicy.__init__(
             self,
             observation_space,
@@ -275,26 +253,23 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
             squash_output=squash_output,
             normalize_images=normalize_images,
         )
-
+        
         if isinstance(net_arch, list) and len(net_arch) > 0 and isinstance(net_arch[0], dict):
             warnings.warn(
-                (
-                    "As shared layers in the mlp_extractor are removed since SB3 v1.8.0, "
-                    "you should now pass directly a dictionary and not a list "
-                    "(net_arch=dict(pi=..., vf=...) instead of net_arch=[dict(pi=..., vf=...)])"
-                ),
+                "As shared layers in the mlp_extractor are removed since SB3 v1.8.0, "
+                "you should now pass directly a dictionary and not a list "
+                "(net_arch=dict(pi=..., vf=...) instead of net_arch=[dict(pi=..., vf=...)])"
             )
             net_arch = net_arch[0]
-
-        # Default network architecture, from stable-baselines
+        
         if net_arch is None:
             net_arch = dict(pi=[64, 64], vf=[64, 64])
-
+        
         self.net_arch = net_arch
         self.activation_fn = activation_fn
         self.ortho_init = ortho_init
-
-        # Feature extractor is never shared between pi and vf
+        
+        # Feature extractors not shared
         self.share_features_extractor = False
         self.features_extractor_kwargs.update({"critic": False})
         self.features_extractor = self.make_features_extractor()
@@ -302,12 +277,12 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
         self.pi_features_extractor = self.features_extractor
         self.features_extractor_kwargs.update({"critic": True})
         self.vf_features_extractor = self.make_features_extractor()
-
+        
         self.log_std_init = log_std_init
         dist_kwargs = None
-
-        assert not (squash_output and not use_sde), "squash_output=True is only available when using gSDE (use_sde=True)"
-        # Keyword arguments for gSDE distribution
+        
+        assert not (squash_output and not use_sde), "squash_output=True only available with use_sde=True"
+        
         if use_sde:
             dist_kwargs = {
                 "full_std": full_std,
@@ -317,15 +292,14 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
             }
         else:
             dist_kwargs = {}
-
+        
         self.use_sde = use_sde
         self.dist_kwargs = dist_kwargs
-
-        # Action distribution
+        
         self.action_dist = make_proba_distribution(
             action_space, self.log_std_init, self.dist_kwargs
         )
-
+        
         self._build(lr_schedule)
     
     def _build(self, lr_schedule):
@@ -334,4 +308,6 @@ class InfoMARLActorCriticPolicy(ActorCriticPolicy):
             nn.Linear(self.mlp_extractor.latent_dim_pi, self.action_space.shape[-1]),
             nn.Flatten(),
         )
-        self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]
+        self.optimizer = self.optimizer_class(
+            self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs
+        )

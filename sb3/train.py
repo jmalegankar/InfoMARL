@@ -10,7 +10,7 @@ import os
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 env = vmas.make_env(
-    scenario="simple_spread",
+    scenario="multi_give_way",
     n_agents=4,
     num_envs=64,
     continuous_actions=True,
@@ -18,6 +18,8 @@ env = vmas.make_env(
     seed=42,
     device=device,
     terminated_truncated=False,
+    # multi_give_way specific parameters
+    shared_rew=True,
 )
 
 env = wrapper.VMASVecEnv(env, rnd_nums=True)
@@ -41,7 +43,8 @@ else:
         vf_coef=0.5,
         target_kl=0.25,
         max_grad_norm=10.0,
-        learning_rate=1e-4,
+        ent_coef=0.01,
+        learning_rate=5e-4,
     )
 
 while True:
