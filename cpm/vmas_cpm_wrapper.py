@@ -7,12 +7,15 @@ from typing import List, Tuple, Dict
 class VMAS_CPM_Wrapper:
     """
     Wrapper to make VMAS environments compatible with CPM/MAAC code.
-    
-    Converts VMAS continuous actions to discrete 5-action space:
+
+    By default, uses VMAS discrete actions natively (5-action space):
     [no-op, up, down, left, right]
+
+    Can optionally convert CPM discrete actions to VMAS continuous actions
+    by setting continuous_actions=True.
     """
     
-    def __init__(self, vmas_env, continuous_actions=True):
+    def __init__(self, vmas_env, continuous_actions=False):
         self.env = vmas_env
         self.n_agents = vmas_env.n_agents
         self.continuous_actions = continuous_actions
@@ -27,20 +30,27 @@ class VMAS_CPM_Wrapper:
             for _ in range(self.n_agents)
         ]
 
-        # Set up action spaces (CPM uses discrete 5-action space)
-        self.action_space = [Discrete(5) for _ in range(self.n_agents)]
-
-        # Store VMAS action dimension for conversion
+        # Determine action dimension and create action spaces
         if continuous_actions:
-            self.action_dim = vmas_env.action_space[0].shape[-1]
-            # Validate that VMAS uses continuous actions
+            # For continuous actions, we need to know the action dimension for conversion
             if not hasattr(vmas_env.action_space[0], 'shape'):
                 raise ValueError("VMAS environment must have continuous action space when continuous_actions=True")
-            # Warn if action_dim doesn't match expected 2D movement
+            self.action_dim = vmas_env.action_space[0].shape[-1]
             if self.action_dim < 2:
                 print(f"Warning: action_dim={self.action_dim} < 2. Discrete-to-continuous mapping may not work correctly.")
+            # CPM expects discrete actions, so create discrete action space
+            self.num_discrete_actions = 5  # Standard discrete action mapping
+            self.action_space = [Discrete(self.num_discrete_actions) for _ in range(self.n_agents)]
         else:
-            self.action_dim = 2
+            # For discrete actions, VMAS handles the action space internally
+            # Get the actual number of discrete actions from VMAS
+            if hasattr(vmas_env.action_space[0], 'n'):
+                self.num_discrete_actions = vmas_env.action_space[0].n
+            else:
+                self.num_discrete_actions = 5  # Default for 2D movement
+            self.action_dim = self.num_discrete_actions
+            self.action_space = [Discrete(self.num_discrete_actions) for _ in range(self.n_agents)]
+            print(f"Using VMAS discrete actions: {self.num_discrete_actions} actions per agent")
     
     def reset(self) -> List[np.ndarray]:
         """Reset and return observations as list of (num_vmas_envs, obs_dim) arrays."""
@@ -57,21 +67,27 @@ class VMAS_CPM_Wrapper:
     
     def step(self, actions: List[np.ndarray]) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], Dict]:
         """Step with discrete actions, return (obs, rewards, dones, info)."""
-        
-        # Convert discrete to continuous if needed
+
+        # Convert discrete to continuous if needed (for backwards compatibility)
         if self.continuous_actions:
             vmas_actions = self._discrete_to_continuous(actions)
         else:
+            # VMAS uses discrete actions natively - pass through
             vmas_actions = actions
-        
+
         # Convert to tensors for VMAS
         vmas_actions_list = []
         for act in vmas_actions:
-            act_tensor = torch.from_numpy(act).to(self.device).float()
-            if act_tensor.ndim == 1:
-                act_tensor = act_tensor.reshape(self.num_vmas_envs, -1)
+            # Handle one-hot encoded actions from CPM
+            if act.ndim == 2:
+                # Convert one-hot to discrete indices: (n_envs, action_dim) -> (n_envs,)
+                act = np.argmax(act, axis=1)
+
+            act_tensor = torch.from_numpy(act).to(self.device).long()  # Use .long() for discrete actions
+            if act_tensor.ndim == 0:
+                act_tensor = act_tensor.reshape(self.num_vmas_envs)
             vmas_actions_list.append(act_tensor)
-        
+
         # Step VMAS
         obs, rewards, dones, infos = self.env.step(vmas_actions_list)
         
@@ -270,19 +286,22 @@ class DummyVecEnvForCPM:
             env.close()
 
 
-def make_vmas_env_for_cpm(scenario: str, n_agents: int, num_envs: int = 1, 
-                          device: str = "cpu", seed: int = 0, 
+def make_vmas_env_for_cpm(scenario: str, n_agents: int, num_envs: int = 1,
+                          device: str = "cpu", seed: int = 0,
                           max_steps: int = 100, **kwargs):
-    """Create a VMAS environment wrapped for CPM/MAAC."""
+    """Create a VMAS environment wrapped for CPM/MAAC.
+
+    Uses discrete actions natively from VMAS (no conversion needed).
+    """
     import vmas
-    
+
     if scenario == "food_collection":
         vmas_env = vmas.make_env(
             scenario=scenario,
             n_agents=n_agents,
             n_food=kwargs.get("n_food", n_agents),
             num_envs=num_envs,
-            continuous_actions=True,
+            continuous_actions=False,  # Use discrete actions directly
             max_steps=max_steps,
             seed=seed,
             device=device,
@@ -293,14 +312,14 @@ def make_vmas_env_for_cpm(scenario: str, n_agents: int, num_envs: int = 1,
             scenario=scenario,
             n_agents=n_agents,
             num_envs=num_envs,
-            continuous_actions=True,
+            continuous_actions=False,  # Use discrete actions directly
             max_steps=max_steps,
             seed=seed,
             device=device,
             terminated_truncated=False,
         )
-    
-    return VMAS_CPM_Wrapper(vmas_env, continuous_actions=True)
+
+    return VMAS_CPM_Wrapper(vmas_env, continuous_actions=False)
 
 
 def make_parallel_env_for_cpm(scenario: str, n_agents: int, 
