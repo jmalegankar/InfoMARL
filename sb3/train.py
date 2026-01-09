@@ -11,7 +11,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 env = wrapper.SMACVecEnv(
     env_name="smaclite/2s3z-v0",
-    num_envs=64,
+    num_envs=8,
     max_steps=108000,
     rnd_nums=True,
 )
@@ -28,7 +28,7 @@ else:
         env=env,
         device=device,
         verbose=1,
-        batch_size=1024,
+        batch_size=320,
         n_epochs=10,
         gamma=0.99,
         n_steps=160,

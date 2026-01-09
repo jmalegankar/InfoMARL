@@ -51,10 +51,12 @@ class SMACVecEnv(DummyVecEnv):
         rews = np.zeros(self.num_envs)
         dones = np.zeros(self.num_envs, dtype=bool)
         obs = np.zeros((self.num_envs, *self.observation_space.shape), dtype=self.observation_space.dtype)
+        infos = [{} for _ in range(self.num_envs)]
         for i, env in enumerate(self._envs):
-            ob, rew, done, _, _ = env.step(actions[i].tolist())
+            ob, rew, done, _, info = env.step(actions[i].tolist())
             rews[i] = rew
             dones[i] = done
+            infos[i].update(info)
             if self.rnd_nums:
                 obs[i, :, :-1] = np.stack(ob, axis=0)
                 obs[i, :, -1] = np.random.rand(self.num_agents)
@@ -62,7 +64,6 @@ class SMACVecEnv(DummyVecEnv):
                 obs[i, ...] = np.stack(ob, axis=0)
 
         self._steps += 1
-        infos = [{} for _ in range(self.num_envs)]
         rews /= self.num_agents
         for i in range(self.num_envs):
             if dones[i] or self._steps[i] >= self.max_steps:
