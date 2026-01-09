@@ -22,11 +22,11 @@ spec:
             requests:
               cpu: "8"
               memory: "16Gi"
-              nvidia.com/gpu: "2"
+              nvidia.com/gpu: "1"
             limits:
               cpu: "8"
               memory: "16Gi"
-              nvidia.com/gpu: "2"
+              nvidia.com/gpu: "1"
           volumeMounts:
             - name: jai-fast-vol-trial
               mountPath: /avl-west
