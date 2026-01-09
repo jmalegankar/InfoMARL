@@ -3,3 +3,8 @@ logs/
 __pycache__/
 *.pyc
 models/
+results/
+models/
+eval_data/
+cpm/
+baselines/
