@@ -1,7 +1,5 @@
 """
-BenchMARL Training Script - Production Ready
-Verified against BenchMARL v1.3.0 documentation
-Handles NaN errors with proven numerical stability measures
+BenchMARL Training Script - EVALUATION NaN FIX (CORRECTED)
 """
 
 import argparse
@@ -81,8 +79,8 @@ def create_task_configs(n_agents_list):
 
 def configure_experiment(args):
     """
-    Configure experiment with NaN-prevention settings
-    Settings verified from BenchMARL fine_tuned/vmas/conf/config.yaml
+    Configure experiment with EVALUATION NaN prevention
+    Key insight: NaN happens during evaluation rollouts, not training
     """
     experiment_config = ExperimentConfig.get_from_yaml()
     
@@ -92,46 +90,53 @@ def configure_experiment(args):
     experiment_config.loggers = args.loggers
     experiment_config.save_folder = args.save_folder
     
-    # Device configuration - EXPLICIT
+    # Device configuration
     experiment_config.train_device = 'cuda'
     experiment_config.sampling_device = 'cuda'
     
-    # Learning rate - CRITICAL (use low LR to prevent NaN)
-    # Verified from fine_tuned config: lr = 0.00005
-    experiment_config.lr = 5e-5
+    # CRITICAL: Even lower learning rate (1e-5 instead of 5e-5)
+    experiment_config.lr = 1e-5
     
-    # Gradient clipping - CRITICAL (prevents NaN from exploding gradients)
-    # Verified syntax from ExperimentConfig documentation
-    experiment_config.clip_grad_norm = True  # Boolean: enable clipping
-    experiment_config.clip_grad_val = 5.0    # Float: max gradient norm
+    # CRITICAL: Stricter gradient clipping (1.0 instead of 5.0)
+    experiment_config.clip_grad_norm = True
+    experiment_config.clip_grad_val = 1.0
     
     # Adam epsilon for numerical stability
     experiment_config.adam_eps = 1e-5
+    
+    # CRITICAL: Evaluation uses deterministic actions
+    experiment_config.evaluation_deterministic_actions = True
+    
+    # CRITICAL: Evaluation interval must be multiple of batch size (6000)
+    # Valid values: 6000, 12000, 18000, 24000, 30000, etc.
+    experiment_config.evaluation_interval = 12_000  # Every 12k frames (2 batches)
+    
+    # Training batch sizes
+    experiment_config.on_policy_collected_frames_per_batch = 6000
+    experiment_config.on_policy_minibatch_size = 4096
     
     return experiment_config
 
 
 def configure_algorithms():
-    """
-    Configure MAPPO and MASAC with conservative settings
-    No algorithm-specific gradient clipping needed - handled by ExperimentConfig
-    """
-    # MAPPO Configuration (On-policy)
+    """Configure MAPPO and MASAC"""
     mappo_config = MappoConfig.get_from_yaml()
-    # All gradient clipping handled by ExperimentConfig
-    
-    # MASAC Configuration (Off-policy)  
     masac_config = MasacConfig.get_from_yaml()
-    # All gradient clipping handled by ExperimentConfig
-    
     return [mappo_config, masac_config]
+
+
+def configure_models():
+    """Configure models"""
+    model_config = MlpConfig.get_from_yaml()
+    critic_model_config = MlpConfig.get_from_yaml()
+    return model_config, critic_model_config
 
 
 def run_benchmark(args):
     """Main benchmark execution with comprehensive error handling"""
     
     print("\n" + "="*70)
-    print("BenchMARL Experiment - NaN-Stable Configuration")
+    print("BenchMARL Experiment - EVALUATION NaN FIX")
     print("="*70)
     print(f"Configuration:")
     print(f"  • Agents: {args.n_agents}")
@@ -142,14 +147,17 @@ def run_benchmark(args):
     print("="*70 + "\n")
     
     try:
-        # Configure experiment with NaN prevention
+        # Configure experiment
         print("⚙️  Configuring experiment...")
         experiment_config = configure_experiment(args)
         
         print(f"    ✓ Devices: train={experiment_config.train_device}, "
               f"sampling={experiment_config.sampling_device}")
-        print(f"    ✓ Learning rate: {experiment_config.lr}")
-        print(f"    ✓ Gradient clipping: enabled (max_norm={experiment_config.clip_grad_val})")
+        print(f"    ✓ Learning rate: {experiment_config.lr} (ultra-low)")
+        print(f"    ✓ Gradient clipping: max_norm={experiment_config.clip_grad_val} (strict)")
+        print(f"    ✓ Evaluation: deterministic={experiment_config.evaluation_deterministic_actions}")
+        print(f"    ✓ Evaluation interval: {experiment_config.evaluation_interval:,} frames")
+        print(f"    ✓ Batch size: {experiment_config.on_policy_collected_frames_per_batch:,} frames")
         
         # Configure algorithms
         print("⚙️  Configuring algorithms...")
@@ -164,8 +172,7 @@ def run_benchmark(args):
         
         # Model configurations
         print("⚙️  Configuring models...")
-        model_config = MlpConfig.get_from_yaml()
-        critic_model_config = MlpConfig.get_from_yaml()
+        model_config, critic_model_config = configure_models()
         print(f"    ✓ Models: MLP (actor + critic)")
         
         # Create benchmark
@@ -194,17 +201,17 @@ def run_benchmark(args):
     except AssertionError as e:
         if "isnan" in str(e):
             print("\n" + "="*70)
-            print("❌ NaN ERROR DETECTED")
+            print("❌ NaN ERROR DURING EVALUATION")
             print("="*70)
-            print("NaN values appeared in actions despite stability measures.")
-            print("\nPossible causes:")
-            print("  1. Task-specific numerical issues")
-            print("  2. Environment returning invalid observations")
-            print("  3. Require even lower learning rate")
-            print("\nSuggested fixes:")
-            print("  • Try: experiment_config.lr = 1e-5 (even lower)")
-            print("  • Try: experiment_config.clip_grad_val = 1.0 (stricter clipping)")
-            print("  • Check if specific task is problematic")
+            print("The policy network is outputting NaN actions during evaluation.")
+            print("\nThis means weights diverged during training despite clipping.")
+            print("\n🔧 NUCLEAR OPTIONS TO TRY:")
+            print("  1. Reduce LR to 5e-6: experiment_config.lr = 5e-6")
+            print("  2. Reduce grad clip to 0.5: experiment_config.clip_grad_val = 0.5")
+            print("  3. Use CPU: experiment_config.train_device = 'cpu'")
+            print("  4. Disable evaluation: python3 ./train.py --no-evaluation")
+            print("  5. Test MAPPO only (comment out MASAC)")
+            print("  6. Test SIMPLE_SPREAD only (comment out other tasks)")
             print("="*70 + "\n")
         raise
         
@@ -222,7 +229,7 @@ def run_benchmark(args):
 
 
 if __name__ == "__main__":
-    # Set PyTorch numerical stability settings
+    # Set PyTorch for maximum numerical stability
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     
