@@ -5,3 +5,5 @@ __pycache__/
 models/
 eval_data/
 results/
+baselines/smaclite/outputs
+baselines/results

@@ -1,9 +1,3 @@
-"""
-Unified BenchMARL Training Script
-Supports: MAPPO (on-policy), MASAC (off-policy), QMIX (off-policy, discrete)
-Properly handles custom VMAS scenarios and algorithm-specific configurations.
-"""
-
 import argparse
 import copy
 from dataclasses import dataclass
@@ -70,6 +64,11 @@ def configure_experiment(
     config.clip_grad_val = args.clip_grad
     config.adam_eps = 1e-5
     
+    # Additional stability for off-policy algorithms
+    if algo_type in [AlgorithmType.OFF_POLICY_CONTINUOUS, AlgorithmType.OFF_POLICY_DISCRETE]:
+        config.clip_grad_val = min(args.clip_grad, 1.0)  # More aggressive clipping
+        config.adam_eps = 1e-8  # Standard Adam epsilon
+    
     # Evaluation settings
     config.evaluation_deterministic_actions = True
     config.evaluation_interval = args.eval_interval
@@ -84,7 +83,7 @@ def configure_experiment(
     elif algo_type == AlgorithmType.OFF_POLICY_CONTINUOUS:
         config.lr = args.lr_off_policy
         config.off_policy_collected_frames_per_batch = args.frames_per_batch
-        config.off_policy_n_envs_per_worker = 60
+        config.off_policy_n_envs_per_worker = max(args.frames_per_batch // args.num_workers, 10)
         config.off_policy_train_batch_size = args.train_batch_size
         config.off_policy_n_optimizer_steps = args.n_optimizer_steps
         config.off_policy_memory_size = args.replay_buffer_size
@@ -94,12 +93,18 @@ def configure_experiment(
         config.lr = args.lr_off_policy
         config.prefer_continuous_actions = False  # QMIX needs discrete
         config.off_policy_collected_frames_per_batch = args.frames_per_batch
-        config.off_policy_n_envs_per_worker = 60
+        config.off_policy_n_envs_per_worker = max(args.frames_per_batch // args.num_workers, 10)
         config.off_policy_train_batch_size = args.train_batch_size
         config.off_policy_n_optimizer_steps = args.n_optimizer_steps
         config.off_policy_memory_size = args.replay_buffer_size
         config.off_policy_init_random_frames = args.frames_per_batch
     
+    # Checkpoint saving (add after "config.sampling_device = args.device")
+    config.checkpoint_interval = args.eval_interval  # Save at each eval
+    config.checkpoint_at_end = True
+    config.keep_checkpoints_num = 3  # Keep top 3 checkpoints
+    config.restore_file = None  # For resuming if needed
+
     return config
 
 
@@ -118,6 +123,7 @@ VMAS_TASKS = {
     "discovery": VmasTask.DISCOVERY,
     "flocking": VmasTask.FLOCKING,
     "dispersion": VmasTask.DISPERSION,
+    "food_collection": VmasTask.FOOD_COLLECTION
 
 }
 
@@ -167,6 +173,13 @@ def run_single_algorithm_benchmark(
     # Get algorithm config
     algo_config = algo_info.config_class.get_from_yaml()
     
+
+    if algo_name == "mappo":
+    # Tighter PPO clipping for stability
+        algo_config.clip_epsilon = 0.2  # Standard PPO clip
+        algo_config.entropy_coef = 0.01  # Lower entropy to reduce exploration noise
+        algo_config.critic_coef = 0.5
+        
     # Model configs
     model_config = MlpConfig.get_from_yaml()
     critic_model_config = MlpConfig.get_from_yaml()
@@ -179,6 +192,11 @@ def run_single_algorithm_benchmark(
             for seed in seeds:
                 print(f"\n  → Task: {task.name}, Seed: {seed}")
                 try:
+                    # Force garbage collection before each run
+                    import gc
+                    gc.collect()
+                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                    
                     experiment = Experiment(
                         task=task,
                         algorithm_config=algo_config,
@@ -188,28 +206,59 @@ def run_single_algorithm_benchmark(
                         config=exp_config,
                     )
                     experiment.run()
+                    print(f"    ✓ Completed successfully")
                 except Exception as e:
                     print(f"    ✗ Failed: {e}")
                     if args.fail_fast:
                         raise
+                    import traceback
+                    traceback.print_exc()
     else:
         # Continuous algorithms can use Benchmark class
-        benchmark = Benchmark(
-            algorithm_configs=[algo_config],
-            tasks=tasks,
-            seeds=seeds,
-            experiment_config=exp_config,
-            model_config=model_config,
-            critic_model_config=critic_model_config,
-        )
-        benchmark.run_sequential()
+        if args.run_individually:
+            # Run each task/seed individually for better error isolation
+            for task in tasks:
+                for seed in seeds:
+                    print(f"\n  → Task: {task.name}, Seed: {seed}")
+                    try:
+                        import gc
+                        gc.collect()
+                        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                        
+                        experiment = Experiment(
+                            task=task,
+                            algorithm_config=algo_config,
+                            model_config=model_config,
+                            critic_model_config=critic_model_config,
+                            seed=seed,
+                            config=exp_config,
+                        )
+                        experiment.run()
+                        print(f"    ✓ Completed successfully")
+                    except Exception as e:
+                        print(f"    ✗ Failed: {e}")
+                        if args.fail_fast:
+                            raise
+                        import traceback
+                        traceback.print_exc()
+        else:
+            # Use Benchmark class for parallel execution
+            benchmark = Benchmark(
+                algorithm_configs=[algo_config],
+                tasks=tasks,
+                seeds=seeds,
+                experiment_config=exp_config,
+                model_config=model_config,
+                critic_model_config=critic_model_config,
+            )
+            benchmark.run_sequential()
 
 
 def run_benchmark(args):
     """Main benchmark execution."""
     
     print("\n" + "="*70)
-    print("BenchMARL Unified Training Script")
+    print("BenchMARL Training Script")
     print("="*70)
     print(f"Algorithms: {args.algorithms}")
     print(f"Tasks: {args.tasks}")
@@ -217,6 +266,8 @@ def run_benchmark(args):
     print(f"Seeds: {args.seeds}")
     print(f"Max frames: {args.max_n_frames:,}")
     print(f"Device: {args.device}")
+    print(f"Workers: {args.num_workers}")
+    print(f"Run individually: {args.run_individually}")
     print("="*70)
     
     # Create tasks
@@ -251,7 +302,7 @@ def run_benchmark(args):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Unified BenchMARL training for MAPPO, MASAC, and QMIX",
+        description="BenchMARL Training Script",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     
@@ -379,7 +430,23 @@ def parse_args():
         action="store_true",
         help="Stop on first error",
     )
-    
+    parser.add_argument(
+        "--run_individually",
+        action="store_true",
+        help="Run each task/seed combo individually (slower but more stable)",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=4,
+        help="Number of parallel workers for data collection",
+    )
+    parser.add_argument(
+        "--checkpoint_interval",
+        type=int,
+        default=50_000,
+        help="Checkpoint save interval (frames)",
+    )
     args = parser.parse_args()
     args.evaluation = not args.no_evaluation
     return args
