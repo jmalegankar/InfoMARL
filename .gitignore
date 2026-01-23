@@ -7,3 +7,5 @@ eval_data/
 results/
 baselines/smaclite/outputs
 baselines/results
+models_/
+recordings/

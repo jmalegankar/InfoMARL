@@ -1,17 +1,3 @@
-"""
-SMACLite + BenchMARL Integration
-================================
-This module provides a custom TorchRL wrapper and BenchMARL Task for SMACLite environments.
-
-Key challenges addressed:
-1. SMACLite uses Gymnasium Tuple spaces → need to convert to TorchRL's MARL TensorDict format
-2. Missing SMAC-style methods (get_obs_size, get_state_size, get_total_actions, get_env_info)
-3. Proper agent grouping for BenchMARL's cooperative training
-
-Architecture:
-    SMACLite (Gymnasium) → SMACliteTorchRLWrapper (EnvBase) → SMACliteTask (BenchMARL)
-"""
-
 import copy
 from typing import Any, Callable, Dict, List, Optional
 from enum import Enum
@@ -29,15 +15,11 @@ from torchrl.envs import step_mdp
 
 
 # ============================================================================
-# PART 1: TorchRL Wrapper for SMACLite
+# TorchRL Wrapper for SMACLite
 # ============================================================================
 
 class SMACliteTorchRLWrapper(EnvBase):
     """
-    TorchRL wrapper for SMACLite environments.
-    
-    Converts SMACLite's Gymnasium Tuple spaces to TorchRL's multi-agent TensorDict format.
-    
     Output TensorDict structure:
         agents:
             observation: [n_agents, obs_dim]
@@ -63,11 +45,11 @@ class SMACliteTorchRLWrapper(EnvBase):
         self._env_name = env_name
         self._categorical_actions = categorical_actions
         
-        # Create the underlying Gymnasium environment
+        # Create environment
         self._env = gym.make(env_name, **kwargs)
         self._unwrapped = self._env.unwrapped
         
-        # Extract environment info from the Tuple spaces
+        # Extract environment info
         self._n_agents = len(self._env.observation_space)
         self._obs_dim = self._env.observation_space[0].shape[0]
         self._n_actions = self._env.action_space[0].n
@@ -80,14 +62,13 @@ class SMACliteTorchRLWrapper(EnvBase):
         # Store seed
         self._seed = seed
         
-        # Agent group name (for BenchMARL compatibility)
+        # Agent group name -> for BenchMARL
         self.group_map = {"agents": [f"agent_{i}" for i in range(self._n_agents)]}
         
         # Build specs
         self._make_specs()
         
     def _make_specs(self):
-        """Build TorchRL specs from SMACLite spaces."""
         device = self.device
         
         # Observation spec: [n_agents, obs_dim]
@@ -223,7 +204,7 @@ class SMACliteTorchRLWrapper(EnvBase):
             # one-hot: [n_agents, n_actions] → list of ints
             action_list = actions.argmax(dim=-1).cpu().numpy().tolist()
         
-        # CRITICAL: Enforce action masking - SMACLite will reject invalid actions
+        # Enforce action masking -> SMACLite will reject invalid actions
         # Get current available actions and clamp if necessary
         avail = np.asarray(self._unwrapped.get_avail_actions())  # [n_agents, n_actions]
         for i in range(self._n_agents):
@@ -233,7 +214,7 @@ class SMACliteTorchRLWrapper(EnvBase):
                 if len(valid_actions) > 0:
                     action_list[i] = int(valid_actions[0])
                 else:
-                    action_list[i] = 0  # fallback (shouldn't happen)
+                    action_list[i] = 0  # fallback -> shouldn't happen
         
         # Step the environment
         obs_tuple, reward, terminated, truncated, info = self._env.step(action_list)
@@ -310,7 +291,7 @@ class SMACliteTorchRLWrapper(EnvBase):
             # Fallback: check env spec
             if self._env.spec and self._env.spec.max_episode_steps:
                 return self._env.spec.max_episode_steps
-            return 200  # reasonable default for SMAC-like envs
+            return 200  # not sure what a good default is
         return limit
     
     def sample_action(self, tensordict: TensorDictBase = None) -> TensorDict:
@@ -349,14 +330,14 @@ class SMACliteTorchRLWrapper(EnvBase):
 
 
 # ============================================================================
-# PART 2: BenchMARL Task Definition
+# BenchMARL Task Definition
 # ============================================================================
 
 @dataclass
 class SMACliteTaskConfig:
     """Configuration for SMACLite tasks."""
     map_name: str = "2s3z"
-    max_steps: int = 200
+    max_steps: int = 500
 
 
 class SMACliteTask(Enum):
@@ -448,7 +429,7 @@ class SMACliteTask(Enum):
     def observation_spec(self, env: EnvBase) -> Composite:
         obs_spec = env.observation_spec.clone()
         # Remove state and action_mask from observation spec
-        # (they're accessed separately)
+        # they're accessed separately
         del obs_spec["state"]
         del obs_spec["agents", "action_mask"]
         return obs_spec
@@ -516,125 +497,125 @@ class SMACliteTask(Enum):
         return self
 
 
-# ============================================================================
-# PART 3: Quick Test / Validation
-# ============================================================================
+# # ============================================================================
+# # Quick Test / Validation
+# # ============================================================================
 
-def test_wrapper():
-    """Test the TorchRL wrapper independently."""
-    print("=" * 60)
-    print("Testing SMACliteTorchRLWrapper")
-    print("=" * 60)
+# def test_wrapper():
+#     """Test the TorchRL wrapper independently."""
+#     print("=" * 60)
+#     print("Testing SMACliteTorchRLWrapper")
+#     print("=" * 60)
     
-    env = SMACliteTorchRLWrapper(env_name="smaclite/2s3z-v0", seed=42)
+#     env = SMACliteTorchRLWrapper(env_name="smaclite/2s3z-v0", seed=42)
     
-    print(f"\n[INFO] n_agents: {env.n_agents}")
-    print(f"[INFO] obs_dim: {env._obs_dim}")
-    print(f"[INFO] n_actions: {env._n_actions}")
-    print(f"[INFO] state_dim: {env._state_dim}")
-    print(f"[INFO] episode_limit: {env.episode_limit}")
+#     print(f"\n[INFO] n_agents: {env.n_agents}")
+#     print(f"[INFO] obs_dim: {env._obs_dim}")
+#     print(f"[INFO] n_actions: {env._n_actions}")
+#     print(f"[INFO] state_dim: {env._state_dim}")
+#     print(f"[INFO] episode_limit: {env.episode_limit}")
     
-    print("\n[SPECS]")
-    print(f"observation_spec:\n{env.observation_spec}")
-    print(f"\naction_spec:\n{env.action_spec}")
-    print(f"\nreward_spec:\n{env.reward_spec}")
+#     print("\n[SPECS]")
+#     print(f"observation_spec:\n{env.observation_spec}")
+#     print(f"\naction_spec:\n{env.action_spec}")
+#     print(f"\nreward_spec:\n{env.reward_spec}")
     
-    # Run spec check
-    print("\n[CHECK] Running check_env_specs...")
-    try:
-        check_env_specs(env)
-        print("[OK] Environment specs are valid!")
-    except Exception as e:
-        # Action masking environments often fail spec check because
-        # check_env_specs samples random actions without respecting masks
-        err_str = str(e)
-        if "Invalid action" in err_str or "invalid action" in err_str.lower():
-            print(f"[OK] Spec check failed due to action masking (expected): {err_str}")
-            print("     This is normal - the wrapper handles invalid actions internally.")
-        else:
-            print(f"[WARN] Spec check issue: {e}")
+#     # Run spec check
+#     print("\n[CHECK] Running check_env_specs...")
+#     try:
+#         check_env_specs(env)
+#         print("[OK] Environment specs are valid!")
+#     except Exception as e:
+#         # Action masking environments often fail spec check because
+#         # check_env_specs samples random actions without respecting masks
+#         err_str = str(e)
+#         if "Invalid action" in err_str or "invalid action" in err_str.lower():
+#             print(f"[OK] Spec check failed due to action masking (expected): {err_str}")
+#             print("     This is normal - the wrapper handles invalid actions internally.")
+#         else:
+#             print(f"[WARN] Spec check issue: {e}")
     
-    # Test rollout
-    print("\n[ROLLOUT] Testing 5-step rollout (TED format)...")
-    print("         TED = TorchRL Episode Data: step() output has 'next' key")
-    td = env.reset()
-    print(f"Reset output keys: {list(td.keys(include_nested=True, leaves_only=True))}")
+#     # Test rollout
+#     print("\n[ROLLOUT] Testing 5-step rollout (TED format)...")
+#     print("         TED = TorchRL Episode Data: step() output has 'next' key")
+#     td = env.reset()
+#     print(f"Reset output keys: {list(td.keys(include_nested=True, leaves_only=True))}")
     
-    for step in range(5):
-        # Sample valid action using the helper method
-        action_td = env.sample_action(td)
+#     for step in range(5):
+#         # Sample valid action using the helper method
+#         action_td = env.sample_action(td)
         
-        # Merge action into tensordict
-        td = td.update(action_td)
+#         # Merge action into tensordict
+#         td = td.update(action_td)
         
-        # Step returns TED format: input + "next" containing step output
-        td_step = env.step(td)
+#         # Step returns TED format: input + "next" containing step output
+#         td_step = env.step(td)
         
-        # Show TED structure on first step
-        if step == 0:
-            print(f"Step output keys (TED): {list(td_step.keys())}")
-            print(f"  'next' subkeys: {list(td_step['next'].keys(include_nested=True, leaves_only=True))}")
+#         # Show TED structure on first step
+#         if step == 0:
+#             print(f"Step output keys (TED): {list(td_step.keys())}")
+#             print(f"  'next' subkeys: {list(td_step['next'].keys(include_nested=True, leaves_only=True))}")
         
-        # Access done from the "next" subtensordict
-        done = td_step["next", "done"].item()
-        reward = td_step["next", "agents", "reward"][0, 0].item()
+#         # Access done from the "next" subtensordict
+#         done = td_step["next", "done"].item()
+#         reward = td_step["next", "agents", "reward"][0, 0].item()
         
-        print(f"  Step {step+1}: reward={reward:.3f}, done={done}")
+#         print(f"  Step {step+1}: reward={reward:.3f}, done={done}")
         
-        if done:
-            print("  Episode ended!")
-            break
+#         if done:
+#             print("  Episode ended!")
+#             break
         
-        # Use step_mdp to advance: moves "next" contents to root for next iteration
-        td = step_mdp(td_step)
+#         # Use step_mdp to advance: moves "next" contents to root for next iteration
+#         td = step_mdp(td_step)
     
-    env.close()
-    print("\n[OK] Wrapper test complete!")
-    return True
-
-
-def test_benchmarl_integration():
-    """Test full BenchMARL integration."""
-    print("\n" + "=" * 60)
-    print("Testing BenchMARL Integration")
-    print("=" * 60)
-    
-    # Create task
-    task = SMACliteTask.TWO_S_THREE_Z.get_from_yaml()
-    print(f"\n[TASK] {task}")
-    print(f"[CONFIG] {task.config}")
-    
-    # Get env function
-    env_fn = task.get_env_fun(
-        num_envs=1,
-        continuous_actions=False,
-        seed=42,
-        device="cpu"
-    )
-    
-    # Create environment
-    env = env_fn()
-    print(f"\n[ENV] Created environment: {env}")
-    print(f"[ENV] group_map: {task.group_map(env)}")
-    print(f"[ENV] max_steps: {task.max_steps(env)}")
-    print(f"[ENV] supports_discrete: {task.supports_discrete_actions()}")
-    
-    # Verify specs
-    print(f"\n[SPEC] observation_spec:\n{task.observation_spec(env)}")
-    print(f"\n[SPEC] action_mask_spec:\n{task.action_mask_spec(env)}")
-    print(f"\n[SPEC] state_spec:\n{task.state_spec(env)}")
-    
-    env.close()
-    print("\n[OK] BenchMARL integration test complete!")
-    return True
+#     env.close()
+#     print("\n[OK] Wrapper test complete!")
+#     return True
 
 
-if __name__ == "__main__":
-    import smaclite  # noqa: F401
+# def test_benchmarl_integration():
+#     """Test full BenchMARL integration."""
+#     print("\n" + "=" * 60)
+#     print("Testing BenchMARL Integration")
+#     print("=" * 60)
     
-    test_wrapper()
-    test_benchmarl_integration()
+#     # Create task
+#     task = SMACliteTask.TWO_S_THREE_Z.get_from_yaml()
+#     print(f"\n[TASK] {task}")
+#     print(f"[CONFIG] {task.config}")
     
-    print("\n" + "=" * 60)
-    print("All tests passed! Ready for BenchMARL experiments.")
-    print("=" * 60)
+#     # Get env function
+#     env_fn = task.get_env_fun(
+#         num_envs=1,
+#         continuous_actions=False,
+#         seed=42,
+#         device="cpu"
+#     )
+    
+#     # Create environment
+#     env = env_fn()
+#     print(f"\n[ENV] Created environment: {env}")
+#     print(f"[ENV] group_map: {task.group_map(env)}")
+#     print(f"[ENV] max_steps: {task.max_steps(env)}")
+#     print(f"[ENV] supports_discrete: {task.supports_discrete_actions()}")
+    
+#     # Verify specs
+#     print(f"\n[SPEC] observation_spec:\n{task.observation_spec(env)}")
+#     print(f"\n[SPEC] action_mask_spec:\n{task.action_mask_spec(env)}")
+#     print(f"\n[SPEC] state_spec:\n{task.state_spec(env)}")
+    
+#     env.close()
+#     print("\n[OK] BenchMARL integration test complete!")
+#     return True
+
+
+# if __name__ == "__main__":
+#     import smaclite  # noqa: F401
+    
+#     test_wrapper()
+#     test_benchmarl_integration()
+    
+#     print("\n" + "=" * 60)
+#     print("All tests passed! Ready for BenchMARL experiments.")
+#     print("=" * 60)

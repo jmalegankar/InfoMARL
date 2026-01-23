@@ -40,7 +40,7 @@ def run_mappo_experiment():
     experiment_config.train_device = "cuda"
     experiment_config.sampling_device = "cuda"
     # Training settings
-    experiment_config.max_n_frames = 2_000_000  # ~30-45 min on GPU
+    experiment_config.max_n_frames = 2_000_000
     experiment_config.on_policy_collected_frames_per_batch = 3200  # 800 steps * 4 envs
     experiment_config.on_policy_n_envs_per_worker = 8
     experiment_config.on_policy_minibatch_size = 1600
@@ -49,7 +49,7 @@ def run_mappo_experiment():
     # Stability
     experiment_config.lr = 5e-4
     experiment_config.clip_grad_norm = True
-    experiment_config.clip_grad_val = 10.0  # SMAC is more stable than VMAS
+    experiment_config.clip_grad_val = 10.0
     experiment_config.adam_eps = 1e-5
     
     # Evaluation & logging
@@ -102,7 +102,7 @@ def run_qmix_experiment():
     experiment_config.sampling_device = "cuda"
     
     # Training settings
-    experiment_config.max_n_frames = 2_000_000  # ~45-60 min on GPU
+    experiment_config.max_n_frames = 2_000_000
     experiment_config.off_policy_collected_frames_per_batch = 800
     experiment_config.off_policy_n_envs_per_worker = 8
     experiment_config.off_policy_train_batch_size = 32
@@ -118,7 +118,7 @@ def run_qmix_experiment():
     
     # Evaluation & logging
     experiment_config.evaluation = True
-    experiment_config.evaluation_interval = 8_000  # Every 10 batches
+    experiment_config.evaluation_interval = 8_000
     experiment_config.evaluation_episodes = 10
     experiment_config.evaluation_deterministic_actions = True
     

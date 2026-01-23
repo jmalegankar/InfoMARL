@@ -45,10 +45,6 @@ def configure_experiment(
     args,
     algo_type: AlgorithmType
 ) -> ExperimentConfig:
-    """
-    Configure experiment with algorithm-appropriate settings.
-    On-policy and off-policy algorithms have different batch/buffer configs.
-    """
     config = ExperimentConfig.get_from_yaml()
     
     # Common settings
@@ -66,8 +62,8 @@ def configure_experiment(
     
     # Additional stability for off-policy algorithms
     if algo_type in [AlgorithmType.OFF_POLICY_CONTINUOUS, AlgorithmType.OFF_POLICY_DISCRETE]:
-        config.clip_grad_val = min(args.clip_grad, 1.0)  # More aggressive clipping
-        config.adam_eps = 1e-8  # Standard Adam epsilon
+        config.clip_grad_val = min(args.clip_grad, 1.0)
+        config.adam_eps = 1e-8
     
     # Evaluation settings
     config.evaluation_deterministic_actions = True
@@ -99,7 +95,7 @@ def configure_experiment(
         config.off_policy_memory_size = args.replay_buffer_size
         config.off_policy_init_random_frames = args.frames_per_batch
     
-    # Checkpoint saving (add after "config.sampling_device = args.device")
+    # Checkpoint saving
     config.checkpoint_interval = args.eval_interval  # Save at each eval
     config.checkpoint_at_end = True
     config.keep_checkpoints_num = 3  # Keep top 3 checkpoints
@@ -129,7 +125,6 @@ VMAS_TASKS = {
 
 
 def create_tasks(task_names: List[str], n_agents: int) -> List[TaskClass]:
-    """Create task configurations, modifying n_agents where applicable."""
     tasks = []
     
     for task_name in task_names:
@@ -190,9 +185,9 @@ def run_single_algorithm_benchmark(
         # QMIX needs discrete actions - run experiments individually
         for task in tasks:
             for seed in seeds:
-                print(f"\n  → Task: {task.name}, Seed: {seed}")
+                print(f"\n  Task: {task.name}, Seed: {seed}")
                 try:
-                    # Force garbage collection before each run
+                    # Force garbage collection before each run, maybe remove foru ur GPU
                     import gc
                     gc.collect()
                     torch.cuda.empty_cache() if torch.cuda.is_available() else None
@@ -206,20 +201,19 @@ def run_single_algorithm_benchmark(
                         config=exp_config,
                     )
                     experiment.run()
-                    print(f"    ✓ Completed successfully")
+                    print(f"    Completed successfully")
                 except Exception as e:
-                    print(f"    ✗ Failed: {e}")
+                    print(f"    Failed: {e}")
                     if args.fail_fast:
                         raise
                     import traceback
                     traceback.print_exc()
     else:
-        # Continuous algorithms can use Benchmark class
         if args.run_individually:
             # Run each task/seed individually for better error isolation
             for task in tasks:
                 for seed in seeds:
-                    print(f"\n  → Task: {task.name}, Seed: {seed}")
+                    print(f"\n  Task: {task.name}, Seed: {seed}")
                     try:
                         import gc
                         gc.collect()
@@ -234,9 +228,9 @@ def run_single_algorithm_benchmark(
                             config=exp_config,
                         )
                         experiment.run()
-                        print(f"    ✓ Completed successfully")
+                        print(f"    Completed successfully")
                     except Exception as e:
-                        print(f"    ✗ Failed: {e}")
+                        print(f"    Failed: {e}")
                         if args.fail_fast:
                             raise
                         import traceback
