@@ -4,7 +4,7 @@ __pycache__/
 *.pyc
 models/
 eval_data/
-results/
+*results/
 baselines/smaclite/outputs
 baselines/results
 models_/

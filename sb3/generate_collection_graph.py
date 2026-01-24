@@ -1,20 +1,3 @@
-#!/usr/bin/env python3
-"""
-food_eval_aggregate.py
-
-Reads a directory of VMAS food_collection .dat (CBOR) files and:
-  • Validates each file is for scenario == "food_collection" (chunk 1)
-  • Keeps ONLY files where n_food == n_agents
-  • Builds a batched env (num_envs from chunk 1), reads max_steps (chunk 2)
-  • Vectorized single loop over steps to accumulate TEAM rewards per env
-  • Normalizes episodic return per robot (/ N_agents)
-  • Aggregates stats by (method, n_agents)
-  • Saves food_results.json / .csv and a comparison plot (SVG + PNG)
-
-Usage:
-  python food_eval_aggregate.py --eval_dir ./eval_data --device auto
-"""
-
 import argparse
 import glob
 import json
@@ -36,7 +19,7 @@ plt.rcParams.update({
     'font.size': 11,
     'axes.titlesize': 12,
     'axes.labelsize': 11,
-    'legend.fontsize': 11,
+    'legend.fontsize': 10,
     'xtick.labelsize': 10,
     'ytick.labelsize': 10,
     'font.family': 'sans-serif',
@@ -46,51 +29,82 @@ plt.rcParams.update({
 
 # ---------- Method display & colors ----------
 METHOD_DISPLAY = {
+    # Custom
     'infomarl': 'Ours',
+    'infomarl_rnd': 'Ours (rnd)',
+    'infomarl_nomask': 'Ours (no mask)',
     'gsa': 'GSA',
     'ph-marl': 'pH-MARL',
+    
+    # BenchMARL Baselines
+    'benchmarl_mappo': 'MAPPO',
+    'benchmarl_qmix': 'QMIX',
+    'benchmarl_ippo': 'IPPO',
+    'benchmarl_masac': 'MASAC',
 }
+
 METHOD_COLORS = {
-    'Ours':   '#2E86AB',  # Blue
-    'GSA':    '#F18F01',  # Orange
-    'pH-MARL':'#A23B72',  # Purple
+    'Ours':          '#2E86AB',  # Blue
+    'Ours (rnd)':    '#17becf',  # Cyan
+    'Ours (no mask)':'#2ca02c',  # Green
+    'GSA':           '#F18F01',  # Orange
+    'pH-MARL':       '#A23B72',  # Purple
+    
+    # Baselines
+    'MAPPO':         '#7f7f7f',  # Gray
+    'QMIX':          '#d62728',  # Red
+    'IPPO':          '#9467bd',  # Violet
+    'MASAC':         '#8c564b',  # Brown
 }
-PLOT_ORDER = ['Ours', 'GSA', 'pH-MARL']  # requested order
+
+PLOT_ORDER = [
+    'Ours', 
+    'MAPPO', 
+    'QMIX', 
+    'IPPO', 
+    'MASAC',
+    'GSA', 
+    'pH-MARL'
+]
 
 # ---------- Core per-file compute (vectorized single-loop) ----------
-def fast_compute_rewards_food(path: str, normalize_per_robot: bool = True, normalize_per_robot_square: bool = False):
+def fast_compute_rewards_food(path: str, normalize_per_robot: bool = True):
     """
     Returns:
       episodic_per_env: torch.Tensor [num_envs] per-robot episodic returns
       meta: dict with fields (scenario, n_agents, n_food, num_envs, max_steps, method, device)
-    Raises:
-      ValueError if file is not food_collection or if n_food != n_agents.
     """
     with open(path, "rb") as f:
         # Chunk 1: env config
-        cfg = cbor2.load(f)
+        try:
+            cfg = cbor2.load(f)
+        except Exception as e:
+            print(f"Error loading header from {path}: {e}")
+            return None, None
+
         scenario = cfg.get("scenario", "food_collection")
         if scenario != "food_collection":
-            raise ValueError(f"{path}: scenario '{scenario}' != 'food_collection' (skipping).")
+            # Silently skip non-food files if they accidentally get matched
+            return None, None
 
         n_agents = int(cfg.get("n_agents", 3))
+        # Default n_food to n_agents if not present
         n_food = int(cfg.get("n_food", n_agents))
-        if n_food != n_agents:
-            raise ValueError(f"{path}: n_food ({n_food}) != n_agents ({n_agents}) (skipping).")
-
+        
         num_envs = int(cfg.get("num_envs", 64))
-        dev_str = str(cfg.get("device", "cpu"))
 
         # Device resolution
-        device = torch.device("cuda" if (dev_str == "cuda" and torch.cuda.is_available()) else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Chunk 2: meta / max steps / model name
         meta2 = cbor2.load(f)
         max_steps = int(meta2.get("max_steps", 400))
-        raw_model = str(meta2.get("model", "unknown")).lower()
-        method = METHOD_DISPLAY.get(raw_model, raw_model.upper())
+        raw_model = str(meta2.get("model", "unknown"))
+        method = METHOD_DISPLAY.get(raw_model, raw_model)
 
         # Build env
+        # Note: We relax the n_food check to allow generalization tests if needed,
+        # but the standard plot usually assumes n_food=n_agents.
         env = vmas.make_env(
             scenario=scenario,
             n_agents=n_agents,
@@ -102,13 +116,12 @@ def fast_compute_rewards_food(path: str, normalize_per_robot: bool = True, norma
             device=device,
             terminated_truncated=bool(cfg.get("terminated_truncated", False)),
         )
-        world = env.world
+        
         agents = env.agents
-        landmarks = world.landmarks 
+        landmarks = env.world.landmarks 
 
         episodic = torch.zeros(num_envs, device=device, dtype=torch.float32)
 
-        # Single loop over steps; each chunk sets ALL positions at once
         steps_read = 0
         while steps_read < max_steps:
             try:
@@ -117,17 +130,18 @@ def fast_compute_rewards_food(path: str, normalize_per_robot: bool = True, norma
                 break
 
             agent_data = frame.get("agent_data", {})
-            food_data = (frame.get("landmarks", {}))
+            food_data = frame.get("landmarks", {})
 
             # Set agent positions
             for i, agent in enumerate(agents):
-                name = f"agent_{i}"
+                name = agent.name # e.g. "agent_0"
                 pos_list = agent_data.get(name, None)
                 if pos_list is not None:
                     agent.state.pos = torch.tensor(pos_list, device=device, dtype=torch.float32)
 
+            # Set food positions
             for j, food in enumerate(landmarks):
-                name = f"food_{j}"
+                name = food.name # e.g. "landmark_0" or "food_0" depending on VMAS version
                 pos_list = food_data.get(name, None)
                 if pos_list is not None:
                     food.state.pos = torch.tensor(pos_list, device=device, dtype=torch.float32)
@@ -139,8 +153,6 @@ def fast_compute_rewards_food(path: str, normalize_per_robot: bool = True, norma
     # Per-robot normalization
     if normalize_per_robot:
         episodic = episodic / float(n_agents)
-    elif normalize_per_robot_square:
-        episodic = episodic / float(n_agents ** 2)
 
     return episodic, {
         "scenario": scenario,
@@ -153,54 +165,49 @@ def fast_compute_rewards_food(path: str, normalize_per_robot: bool = True, norma
     }
 
 # ---------- Aggregation & I/O ----------
-def aggregate_directory(eval_dir: str, device: str = "auto") -> Dict:
+def aggregate_directory(eval_dir: str) -> Dict:
     """
-    Iterate over *_collection_*.dat, keep only scenario==food_collection and n_food==n_agents, compute stats.
+    Iterate over *_collection_*.dat, keep only scenario==food_collection.
     Returns nested dict: results[method][n_agents] = {mean, std, min, max, n_episodes}
     """
-    files = sorted([p for p in glob.glob(os.path.join(eval_dir, "*_collection_*.dat")) if not p.endswith("_results.dat")])
+    # Pattern match for collection files
+    files = sorted(glob.glob(os.path.join(eval_dir, "*_collection_*.dat")))
     if not files:
         print(f"No food_collection files found in {eval_dir}")
         return {}
 
     results: Dict[str, Dict[int, Dict[str, float]]] = {}
 
+    print(f"Processing {len(files)} files for Food Collection...")
+
     for path in files:
         try:
-            episodic, meta = fast_compute_rewards_food(
-                path,
-                normalize_per_robot=True,
-                normalize_per_robot_square=False
-            )
-        except ValueError as ve:
-            # Not food_collection or n_food!=n_agents; skip
-            print(f"SKIP: {ve}")
-            continue
+            episodic, meta = fast_compute_rewards_food(path, normalize_per_robot=True)
         except Exception as e:
             print(f"ERROR reading {path}: {e}")
             continue
 
+        if episodic is None:
+            continue
+
         method = meta["method"]
         n_agents = meta["n_agents"]
+        
         ep = episodic.detach().float().cpu()
         mean = float(ep.mean().item())
         std = float(ep.std().item())
-        min_v = float(ep.min().item())
-        max_v = float(ep.max().item())
-
+        
         if method not in results:
             results[method] = {}
+            
         results[method][n_agents] = {
             "mean": mean,
             "std": std,
-            "min": min_v,
-            "max": max_v,
             "n_episodes": int(ep.numel()),
             "file": os.path.basename(path),
         }
 
-        print(f"✓ {Path(path).name}: {method}, N={n_agents}, "
-              f"mean={mean:.2f}±{std:.2f}, min={min_v:.2f}, max={max_v:.2f}, n={int(ep.numel())}")
+        print(f"  [OK] {method.ljust(15)} | N={n_agents} | Mean R: {mean:.2f} +/- {std:.2f}")
 
     # Save JSON
     with open("food_results.json", "w") as f:
@@ -213,17 +220,25 @@ def aggregate_directory(eval_dir: str, device: str = "auto") -> Dict:
     return results
 
 def save_csv(results: Dict, methods: List[str]) -> None:
-    agent_counts = sorted({n for m in methods if m in results for n in results[m].keys()})
+    # Filter methods to only those present in results
+    active_methods = [m for m in methods if m in results]
+    # Add any extra methods found but not in PLOT_ORDER
+    for m in results.keys():
+        if m not in active_methods:
+            active_methods.append(m)
+
+    agent_counts = sorted({n for m in active_methods if m in results for n in results[m].keys()})
+    
     with open("food_results.csv", "w", newline="") as f:
         w = csv.writer(f)
         header = ["n_agents"]
-        for m in methods:
+        for m in active_methods:
             header += [f"{m}_mean", f"{m}_std"]
         w.writerow(header)
         for n in agent_counts:
             row = [n]
-            for m in methods:
-                if m in results and n in results[m]:
+            for m in active_methods:
+                if n in results[m]:
                     row += [results[m][n]["mean"], results[m][n]["std"]]
                 else:
                     row += [0.0, 0.0]
@@ -232,59 +247,78 @@ def save_csv(results: Dict, methods: List[str]) -> None:
 
 # ---------- Plot ----------
 def plot_results(results: Dict) -> None:
-    methods = PLOT_ORDER
+    # Filter to active methods
+    active_methods = [m for m in PLOT_ORDER if m in results]
+    # Add leftovers
+    for m in results.keys():
+        if m not in active_methods:
+            active_methods.append(m)
+
     # collect Ns
-    agent_counts = sorted({n for m in methods if m in results for n in results[m].keys()})
+    agent_counts = sorted({n for m in active_methods if m in results for n in results[m].keys()})
     if not agent_counts:
         print("No data to plot.")
         return
 
-    fig, ax = plt.subplots(figsize=(8.4, 5.2))
+    fig, ax = plt.subplots(figsize=(9, 5.5))
     x = np.arange(len(agent_counts))
-    width = 0.26
+    
+    # Dynamic width calculation
+    num_methods = len(active_methods)
+    total_width = 0.8
+    bar_width = total_width / num_methods
 
-    for i, m in enumerate(methods):
+    for i, m in enumerate(active_methods):
         means, stds = [], []
         for n in agent_counts:
-            if m in results and n in results[m]:
+            if n in results[m]:
                 means.append(results[m][n]["mean"])
                 stds.append(results[m][n]["std"])
             else:
                 means.append(0.0)
                 stds.append(0.0)
 
+        # Offset bars
+        offset = (i - num_methods / 2) * bar_width + (bar_width / 2)
+
         ax.bar(
-            x + (i - 1) * width, means, width,
-            yerr=stds, capsize=4,
+            x + offset, 
+            means, 
+            bar_width,
+            yerr=stds, 
+            capsize=4,
             label=m,
             color=METHOD_COLORS.get(m, "#777777"),
-            edgecolor="black", linewidth=0.6, alpha=0.92
+            edgecolor="black", 
+            linewidth=0.6, 
+            alpha=0.9
         )
 
-    ax.set_xlabel("Number of robots", fontsize=11)
-    ax.set_ylabel("Normalized cumulative reward (R)", fontsize=11)
-    ax.set_title("Food Collection", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Number of Agents", fontsize=12)
+    ax.set_ylabel("Normalized Episodic Reward", fontsize=12)
+    ax.set_title("Food Collection", fontsize=13, fontweight="bold")
+    
     ax.set_xticks(x)
     ax.set_xticklabels(agent_counts)
     ax.grid(axis="y", alpha=0.2, linestyle="--")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.legend(loc="lower left", frameon=True, fontsize=11)
+    
+    ax.legend(loc="lower left", frameon=True, fontsize=10)
 
     plt.tight_layout()
     plt.savefig("fig_food_collection.svg", format="svg", bbox_inches="tight")
-    print("🖼️ Saved fig_food_collection.svg")
+    print("\n🖼️ Saved fig_food_collection.svg")
     plt.savefig("fig_food_collection.png", format="png", dpi=300, bbox_inches="tight")
     print("🖼️ Saved fig_food_collection.png")
 
 # ---------- CLI ----------
 def main():
     ap = argparse.ArgumentParser(description="Aggregate & plot VMAS food_collection evaluations")
-    ap.add_argument("--eval_dir", type=str, default="./eval_data", help="Directory with *_food_*.dat files")
-    ap.add_argument("--device", type=str, default="auto", help="cpu | cuda | auto (auto uses file hint + availability)")
+    ap.add_argument("--eval_dir", type=str, default="eval_data", help="Directory with *_collection_*.dat files")
     args = ap.parse_args()
 
-    results = aggregate_directory(args.eval_dir, device=args.device)
+    results = aggregate_directory(args.eval_dir)
     if not results:
         print("No results to visualize.")
         return
