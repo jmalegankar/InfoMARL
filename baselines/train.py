@@ -192,8 +192,8 @@ def parse_args():
     parser.add_argument("--eval_interval", type=int, default=60_000)
     parser.add_argument("--checkpoint_interval", type=int, default=60_000)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--loggers", nargs="+", default=["csv"])
-    parser.add_argument("--save_folder", type=str, default="results")
+    parser.add_argument("--loggers", nargs="+", default=["csv", "tensorboard"])
+    parser.add_argument("--save_folder", type=str, default="results/simple_spread")
     parser.add_argument("--fail_fast", action="store_true")
     return parser.parse_args()
 

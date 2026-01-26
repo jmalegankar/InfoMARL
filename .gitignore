@@ -9,3 +9,10 @@ baselines/smaclite/outputs
 baselines/results
 models_/
 recordings/
+cpm/
+*.png
+*.jpg
+*.svg
+*.pdf
+*.csv
+*.json

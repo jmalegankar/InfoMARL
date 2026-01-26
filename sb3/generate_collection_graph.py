@@ -41,6 +41,8 @@ METHOD_DISPLAY = {
     'benchmarl_qmix': 'QMIX',
     'benchmarl_ippo': 'IPPO',
     'benchmarl_masac': 'MASAC',
+
+    'cpm': 'CPM',
 }
 
 METHOD_COLORS = {
@@ -55,6 +57,7 @@ METHOD_COLORS = {
     'QMIX':          '#d62728',  # Red
     'IPPO':          '#9467bd',  # Violet
     'MASAC':         '#8c564b',  # Brown
+    'CPM':           '#e377c2',  # Pink
 }
 
 PLOT_ORDER = [
@@ -64,7 +67,8 @@ PLOT_ORDER = [
     'IPPO', 
     'MASAC',
     'GSA', 
-    'pH-MARL'
+    'pH-MARL',
+    'CPM',
 ]
 
 # ---------- Core per-file compute (vectorized single-loop) ----------
