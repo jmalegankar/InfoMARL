@@ -95,37 +95,33 @@ def run_experiment(args):
     elif algo_name == "qmix":
         algorithm_config = QmixConfig.get_from_yaml()
         
-        # === LESSON 3: LOGGING (Prevent NaNs) ===
-        # Batch size must be > N_ENVS * MAX_STEPS (8 * 160 = 1280)
-        # We set 2500 to be safe for both maps
         SAFE_BATCH = 2500 
         
         experiment_config.off_policy_n_envs_per_worker = N_ENVS
         experiment_config.off_policy_collected_frames_per_batch = SAFE_BATCH
-        experiment_config.off_policy_train_batch_size = 32
-        experiment_config.off_policy_memory_size = 10_000 
-        experiment_config.off_policy_n_optimizer_steps = 1
-        experiment_config.checkpoint_interval = experiment_config.off_policy_collected_frames_per_batch * 10
-        experiment_config.evaluation_interval = experiment_config.off_policy_collected_frames_per_batch * 10
-
-    elif algo_name == "masac":
-        algorithm_config = MasacConfig.get_from_yaml()
-        algorithm_config.target_entropy = "auto"
         
-        SAFE_BATCH = 2500
-        experiment_config.off_policy_n_envs_per_worker = N_ENVS
-        experiment_config.off_policy_collected_frames_per_batch = SAFE_BATCH
-        experiment_config.off_policy_train_batch_size = 32
-        experiment_config.off_policy_memory_size = 100_000
-        experiment_config.off_policy_init_random_frames = 5000
-        experiment_config.checkpoint_interval = experiment_config.off_policy_collected_frames_per_batch * 10
-        experiment_config.evaluation_interval = experiment_config.off_policy_collected_frames_per_batch * 10
+        # === FIX 1: Much larger training batch ===
+        experiment_config.off_policy_train_batch_size = 256  # Was 32 - way too small!
+        
+        # === FIX 2: Much larger replay buffer ===
+        experiment_config.off_policy_memory_size = 100_000  # Was 10k - need more diverse data
+        
+        # === FIX 3: More gradient updates per collection ===
+        experiment_config.off_policy_n_optimizer_steps = 5  # Was 1 - need more learning per batch
+        
+        # === FIX 4: Longer warmup before greedy ===
+        experiment_config.off_policy_init_random_frames = 10_000  # Fill buffer with diverse data first
+        
+        experiment_config.checkpoint_interval = experiment_config.off_policy_collected_frames_per_batch
+        experiment_config.evaluation_interval = experiment_config.off_policy_collected_frames_per_batch
+
 
     # 4. Model Architecture
     model_config = MlpConfig.get_from_yaml()
     model_config.num_cells = [256, 256] 
     
     critic_config = MlpConfig.get_from_yaml()
+
     critic_config.num_cells = [256, 256]
 
     # 5. Run
