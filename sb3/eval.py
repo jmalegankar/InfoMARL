@@ -6,7 +6,7 @@ from stable_baselines3 import PPO
 
 import wrapper
 import policy
-import smaclite 
+import smaclite2
 
 def evaluate(model_path, map_name, n_episodes=1000, num_envs=20):
     env_name = f"smaclite/{map_name}-v0"

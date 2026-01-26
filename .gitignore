@@ -6,4 +6,11 @@ models/
 results/
 eval_data/
 baselines/results/
-baselines/smaclite/outputs/
+baselines/smaclite/results/
+cpm/
+*.png
+*.svg
+*.pdf
+*.log
+*.csv
+*.json
