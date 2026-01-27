@@ -213,7 +213,9 @@ def run_experiment(args):
     experiment_config.sampling_device = args.device
     experiment_config.max_n_frames = args.max_frames
     experiment_config.loggers = args.loggers
-    experiment_config.save_folder = f"results/smaclite/{algo_name}_{task_name}_seed{args.seed}"
+    experiment_config.save_folder = f"results/{algo_name}_{task_name}"
+    os.makedirs(experiment_config.save_folder, exist_ok=True)
+
     experiment_config.checkpoint_at_end = True
 
     # 3. Algorithm-Specific Config
