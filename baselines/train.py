@@ -1,4 +1,5 @@
 import argparse
+from logging import config
 import torch
 import gc
 import traceback
@@ -11,7 +12,8 @@ from tensordict import TensorDict
 
 from benchmarl.algorithms import MappoConfig, MasacConfig, QmixConfig, IppoConfig
 from benchmarl.environments import VmasTask
-from benchmarl.experiment import Experiment, ExperimentConfig, Callback
+from benchmarl.experiment import Experimen
+from wandb import configt, ExperimentConfig, Callback
 from benchmarl.models.mlp import MlpConfig
 
 # ============================================================================
@@ -214,7 +216,9 @@ def get_exp_config(args, algo_type: AlgorithmType) -> ExperimentConfig:
     config.loggers = args.loggers
     config.save_folder = args.save_folder
     config.checkpoint_at_end = True
-
+    config.clip_grad_norm = True
+    config.clip_grad_val = 0.5  # Set to 0.5 for extra safety on long runs
+    
     if args.resume:
         config.restore_file = True
     

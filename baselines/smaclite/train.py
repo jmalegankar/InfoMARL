@@ -215,17 +215,16 @@ def run_experiment(args):
     experiment_config.loggers = args.loggers
     experiment_config.save_folder = f"results/{algo_name}_{task_name}"
     os.makedirs(experiment_config.save_folder, exist_ok=True)
-
     experiment_config.checkpoint_at_end = True
-
+    experiment_config.clip_grad_norm = True
+    experiment_config.clip_grad_val = 1.0       
+        
     # 3. Algorithm-Specific Config
     if algo_name == "mappo":
         algorithm_config = MappoConfig.get_from_yaml()
         algorithm_config.clip_epsilon = 0.2
         algorithm_config.entropy_coef = 0.01
-        algorithm_config.num_epochs = 10
-        algorithm_config.clip_grad_norm = True
-        algorithm_config.max_grad_norm = 0.5
+
         
         # OPTIMIZED: More parallel envs
         N_ENVS = args.n_envs  # 32-64 for SMACLite
@@ -240,9 +239,6 @@ def run_experiment(args):
         algorithm_config = IppoConfig.get_from_yaml()
         algorithm_config.clip_epsilon = 0.2
         algorithm_config.entropy_coef = 0.01
-        algorithm_config.num_epochs = 10
-        algorithm_config.clip_grad_norm = True
-        algorithm_config.max_grad_norm = 0.5
         
         N_ENVS = args.n_envs
         experiment_config.on_policy_n_envs_per_worker = N_ENVS
