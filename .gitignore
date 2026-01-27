@@ -9,6 +9,7 @@ baselines/smaclite/outputs
 baselines/results
 models_/
 recordings/
+results_old/
 cpm/
 *.png
 *.jpg
