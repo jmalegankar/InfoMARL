@@ -141,15 +141,22 @@ class BenchMARLModel:
 # ============================================================================
 
 def find_best_checkpoint(checkpoint_dir: Path) -> Optional[Path]:
-    checkpoints = list(checkpoint_dir.glob("checkpoint_*.pt"))
+    # Match both 'checkpoint_123.pt' and 'ckpt_f123_r-45.pt'
+    checkpoints = list(checkpoint_dir.glob("*.pt"))
     if not checkpoints:
         return None
     
     def get_frame_count(p):
-        match = re.search(r'checkpoint_(\d+)\.pt', p.name)
+        # This regex looks for 'checkpoint_' OR 'ckpt_f' followed by digits
+        match = re.search(r'(?:checkpoint_|ckpt_f)(\d+)', p.name)
         return int(match.group(1)) if match else 0
     
-    return max(checkpoints, key=get_frame_count)
+    # Filter out files that didn't match our pattern if necessary
+    valid_checkpoints = [c for c in checkpoints if re.search(r'(?:checkpoint_|ckpt_f)(\d+)', c.name)]
+    if not valid_checkpoints:
+        return None
+
+    return max(valid_checkpoints, key=get_frame_count)
 
 def find_all_experiments(results_dir: Path):
     experiments = {}
@@ -171,7 +178,8 @@ def find_all_experiments(results_dir: Path):
                 if not best_ckpt:
                     continue
                 
-                match = re.search(r'checkpoint_(\d+)\.pt', best_ckpt.name)
+                # Use the same logic to extract the frame count for the experiment dict
+                match = re.search(r'(?:checkpoint_|ckpt_f)(\d+)', best_ckpt.name) 
                 frame_count = int(match.group(1)) if match else 0
                 
                 key = (algo, scenario)
@@ -191,8 +199,6 @@ def record_episodes(output_path, env_kwargs, checkpoint_path, algorithm, max_ste
     
     env_kwargs_copy = env_kwargs.copy()
     
-    # === THE FIX ===
-    # For QMIX, we tell VMAS: "I will give you integers, please handle the physics."
     if algorithm == "qmix":
         env_kwargs_copy['continuous_actions'] = False
     
@@ -234,7 +240,7 @@ def record_episodes(output_path, env_kwargs, checkpoint_path, algorithm, max_ste
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--results_dir', type=str, default='baselines/eval')
+    parser.add_argument('--results_dir', type=str, default='baselines/results_old')
     # Default output dir matches your existing ones
     parser.add_argument('--output_dir', type=str, default='eval_data1') 
     parser.add_argument('--algorithms', nargs='+', default=['mappo', 'masac', 'qmix', 'ippo'])

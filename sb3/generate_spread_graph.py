@@ -31,8 +31,8 @@ plt.rcParams.update({
 METHOD_DISPLAY = {
     # Custom
     'infomarl': 'Ours',
-    'infomarl_rnd': 'Ours (rnd)',
-    'infomarl_nomask': 'Ours (no mask)',
+    'infomarl_rnd': 'Ours (Dropout)',
+    'infomarl_nomask': 'Ours w/o Mask',
     'gsa': 'GSA',
     'ph-marl': 'pH-MARL',
     
@@ -41,15 +41,12 @@ METHOD_DISPLAY = {
     'benchmarl_qmix': 'QMIX',
     'benchmarl_ippo': 'IPPO',
     'benchmarl_masac': 'MASAC',
-
-    # CPM Baselines
-    'cpm': 'CPM',
 }
 
 METHOD_COLORS = {
     'Ours':          '#2E86AB',  # Blue
-    'Ours (rnd)':    '#17becf',  # Cyan
-    'Ours (no mask)':'#2ca02c',  # Green
+    'Ours (Dropout)':    '#17becf',  # Cyan
+    'Ours w/o Mask':'#2ca02c',  # Green
     'GSA':           '#F18F01',  # Orange
     'pH-MARL':       '#A23B72',  # Purple
     
@@ -58,19 +55,19 @@ METHOD_COLORS = {
     'QMIX':          '#d62728',  # Red
     'IPPO':          '#9467bd',  # Violet
     'MASAC':         '#8c564b',  # Brown
-    'CPM':           '#e377c2',  # Pink
 }
 
 PLOT_ORDER = [
-    'Ours', 
+
     'MAPPO', 
     'QMIX', 
     'IPPO', 
     'MASAC',
     'GSA', 
     'pH-MARL',
-    'CPM',
-]
+    'Ours', 
+    'Ours (Dropout)',
+    'Ours w/o Mask',]
 
 # ---------- Core per-file compute (vectorized single-loop) ----------
 def fast_compute_rewards(path: str, normalize_per_robot: bool = True):
@@ -303,7 +300,7 @@ def plot_results(results: Dict) -> None:
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     
-    ax.legend(loc="upper right", frameon=True, fontsize=10, ncol=1)
+    ax.legend(loc="lower right", frameon=True, fontsize=10, ncol=3)
 
     plt.tight_layout()
     plt.savefig("fig_simple_spread.svg", format="svg", bbox_inches="tight")

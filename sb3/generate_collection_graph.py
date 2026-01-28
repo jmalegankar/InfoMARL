@@ -57,19 +57,19 @@ METHOD_COLORS = {
     'QMIX':          '#d62728',  # Red
     'IPPO':          '#9467bd',  # Violet
     'MASAC':         '#8c564b',  # Brown
-    'CPM':           '#e377c2',  # Pink
+
 }
 
 PLOT_ORDER = [
-    'Ours', 
     'MAPPO', 
     'QMIX', 
     'IPPO', 
     'MASAC',
     'GSA', 
     'pH-MARL',
-    'CPM',
-]
+    'Ours', 
+    'Ours (rnd)',
+    'Ours (no mask)',]
 
 # ---------- Core per-file compute (vectorized single-loop) ----------
 def fast_compute_rewards_food(path: str, normalize_per_robot: bool = True):
@@ -176,6 +176,22 @@ def aggregate_directory(eval_dir: str) -> Dict:
     """
     # Pattern match for collection files
     files = sorted(glob.glob(os.path.join(eval_dir, "*_collection_*.dat")))
+
+    #bascially only want files where n_agents == n_food
+    filtered_files = []
+    for file in files:
+        try:
+            with open(file, "rb") as f:
+                cfg = cbor2.load(f)
+                n_agents = int(cfg.get("n_agents", 3))
+                n_food = int(cfg.get("n_food", n_agents))
+                if n_agents == n_food:
+                    filtered_files.append(file)
+        except Exception as e:
+            print(f"Error reading {file}: {e}")
+            continue
+    files = filtered_files
+
     if not files:
         print(f"No food_collection files found in {eval_dir}")
         return {}
@@ -319,7 +335,7 @@ def plot_results(results: Dict) -> None:
 # ---------- CLI ----------
 def main():
     ap = argparse.ArgumentParser(description="Aggregate & plot VMAS food_collection evaluations")
-    ap.add_argument("--eval_dir", type=str, default="eval_data", help="Directory with *_collection_*.dat files")
+    ap.add_argument("--eval_dir", type=str, default="eval_data1", help="Directory with *_collection_*.dat files")
     args = ap.parse_args()
 
     results = aggregate_directory(args.eval_dir)
