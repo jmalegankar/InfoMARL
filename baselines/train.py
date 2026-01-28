@@ -12,49 +12,58 @@ from tensordict import TensorDict
 
 from benchmarl.algorithms import MappoConfig, MasacConfig, QmixConfig, IppoConfig
 from benchmarl.environments import VmasTask
-from benchmarl.experiment import Experimen
-from wandb import configt, ExperimentConfig, Callback
+from benchmarl.experiment import Experiment, ExperimentConfig, Callback
 from benchmarl.models.mlp import MlpConfig
 
 # ============================================================================
-# CALLBACK: ROBUST SAVE TOP-K (Safe Counter Version)
+# CALLBACK: ROBUST SAVE TOP-K
 # ============================================================================
-
 class SaveTopK(Callback):
-    def __init__(self, k=3, save_dir="best_models"):
+    def __init__(self, k=3, save_dir="best_models", warmup_frames=500_000):
         super().__init__()
         self.k = k
         self.save_dir = save_dir
+        self.warmup_frames = warmup_frames
         self.top_k_heap = [] 
         self.full_save_dir = None
-        self.eval_counter = 0
+        self.eval_counter = 0 
         
     def on_setup(self):
         self.full_save_dir = os.path.join(self.experiment.folder_name, self.save_dir)
         os.makedirs(self.full_save_dir, exist_ok=True)
-        print(f"   [SaveTopK] Tracking Top {self.k} models in: {self.full_save_dir}")
+        print(f"\n[SaveTopK] Ready. Warmup: {self.warmup_frames}. Saving to: {self.full_save_dir}")
 
     def on_evaluation_end(self, rollouts: list):
         if not rollouts: return
         self.eval_counter += 1
         
+        frames_per_eval = self.experiment.config.evaluation_interval
+        estimated_frames = self.eval_counter * frames_per_eval
+        
+        if estimated_frames == 0:
+            estimated_frames = getattr(self.experiment, "n_frames_collected", self.eval_counter)
+
+        print(f"[SaveTopK] DEBUG: Eval #{self.eval_counter} | Frames: ~{estimated_frames}")
+
+        if estimated_frames < self.warmup_frames:
+            return
+
         stacked = torch.stack(rollouts)
         
-        # 1. Robust Reward Retrieval
+        # Robust Reward Search
         try:
             rewards = stacked[("next", "agents", "reward")]
         except KeyError:
             try:
                 rewards = stacked[("next", "reward")]
             except KeyError:
+                print(f"[SaveTopK] ❌ ERROR: Reward key not found.")
                 return 
 
         mean_reward = rewards.mean().item()
-
-        # 2. Heap Logic
-        frames = getattr(self.experiment, "n_frames_collected", self.eval_counter)
         
-        filename = f"ckpt_{frames}_reward_{mean_reward:.4f}.pt"
+        # Save Logic
+        filename = f"ckpt_f{estimated_frames}_r{mean_reward:.4f}.pt"
         file_path = os.path.join(self.full_save_dir, filename)
 
         if len(self.top_k_heap) < self.k:
@@ -66,14 +75,12 @@ class SaveTopK(Callback):
             if mean_reward > worst_reward:
                 heapq.heappop(self.top_k_heap)
                 if os.path.exists(worst_path): os.remove(worst_path)
-                
                 heapq.heappush(self.top_k_heap, (mean_reward, file_path))
                 self._save(file_path)
-                print(f"   [SaveTopK] 🏆 Top 3 Updated: {mean_reward:.4f} (Beat {worst_reward:.4f})")
+                print(f"   [SaveTopK] 🏆 Top 3 Updated: {mean_reward:.4f}")
 
     def _save(self, path):
-        torch.save(self.experiment.policy.state_dict(), path)
-
+        torch.save(self.experiment.state_dict(), path)
 
 # ============================================================================
 # CALLBACK: ENHANCED EARLY STOPPING (With Performance + Loss + Entropy)
@@ -217,19 +224,18 @@ def get_exp_config(args, algo_type: AlgorithmType) -> ExperimentConfig:
     config.save_folder = args.save_folder
     config.checkpoint_at_end = True
     config.clip_grad_norm = True
-    config.clip_grad_val = 0.5  # Set to 0.5 for extra safety on long runs
+    config.clip_grad_val = 1.0
+    # if args.resume:
+    #     config.restore_file = True
     
-    if args.resume:
-        config.restore_file = True
-    
-    # OPTIMIZED FOR RTX 3070 Ti (8GB)
+
     if algo_type == AlgorithmType.ON_POLICY:
-        n_envs = args.n_envs_on_policy  # 800-1200 recommended
+        n_envs = args.n_envs_on_policy  # 800-1200 
         batch_size = max(args.on_policy_frames_per_batch, n_envs * args.task_max_steps)
         config.on_policy_n_envs_per_worker = n_envs
         config.on_policy_collected_frames_per_batch = batch_size
     else:
-        n_envs = args.n_envs_off_policy  # 64-96 recommended
+        n_envs = args.n_envs_off_policy  # 64-96
         batch_size = n_envs * args.task_max_steps
         config.off_policy_n_envs_per_worker = n_envs
         config.off_policy_collected_frames_per_batch = batch_size
@@ -270,7 +276,7 @@ def run_benchmark(args):
                     reward_patience=args.reward_patience,
                     reward_threshold=args.reward_threshold
                 )
-                saver = SaveTopK(k=3, save_dir="best_models")
+                saver = SaveTopK(k=3, save_dir="best_models", warmup_frames=args.warmup_frames)
 
                 try:
                     gc.collect()
@@ -337,7 +343,7 @@ def parse_args():
     
     # Logging
     parser.add_argument("--loggers", nargs="+", default=["csv", "tensorboard"])
-    parser.add_argument("--save_folder", type=str, default="results/marl_benchmark")
+    parser.add_argument("--save_folder", type=str, default="results_final")
     parser.add_argument("--fail_fast", action="store_true")
     parser.add_argument("--resume", action="store_true", help="Resume training from last checkpoint")
     
@@ -360,7 +366,8 @@ def parse_args():
                         help="Evaluations to consider for reward plateau")
     parser.add_argument("--reward_threshold", type=float, default=0.002,
                         help="Relative reward change threshold (0.2%)")
-    
+    parser.add_argument("--warmup_frames", type=int, default=500_000, 
+                        help="Frames to collect before saving models")
     return parser.parse_args()
 
 if __name__ == "__main__":

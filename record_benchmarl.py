@@ -234,9 +234,9 @@ def record_episodes(output_path, env_kwargs, checkpoint_path, algorithm, max_ste
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--results_dir', type=str, default='baselines/results')
+    parser.add_argument('--results_dir', type=str, default='baselines/eval')
     # Default output dir matches your existing ones
-    parser.add_argument('--output_dir', type=str, default='eval_data') 
+    parser.add_argument('--output_dir', type=str, default='eval_data1') 
     parser.add_argument('--algorithms', nargs='+', default=['mappo', 'masac', 'qmix', 'ippo'])
     parser.add_argument('--scenarios', nargs='+', default=['simple_spread', 'food_collection'])
     parser.add_argument('--n_agents', type=int, default=4)
