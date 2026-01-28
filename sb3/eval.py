@@ -23,7 +23,25 @@ def evaluate(model_path, map_name, n_episodes=1000, num_envs=20):
     
     print(f"Loading model from {model_path}...")
     try:
-        model = PPO.load(model_path, env=env, device=device)
+        model = PPO(
+            policy=policy.InfoMARLActorCriticPolicy,
+            env=env,
+            device=device,
+            verbose=1,
+            batch_size=320,
+            n_epochs=10,
+            gamma=0.99,
+            n_steps=160,
+            vf_coef=0.5,
+            ent_coef=0.001,
+            target_kl=0.25,
+            max_grad_norm=10.0,
+            learning_rate=1e-4,
+        )
+        del model.policy.vf_features_extractor
+        del model.policy.value_net
+        model.policy.load_state_dict(PPO.load("ppo_infomarl.zip", device=device).policy.state_dict(), strict=False)
+        model.policy.eval()
     except Exception as e:
         print(f"Error loading model: {e}")
         print("Ensure 'policy.py' and 'wrapper.py' are in the same directory.")
@@ -36,29 +54,29 @@ def evaluate(model_path, map_name, n_episodes=1000, num_envs=20):
     obs = env.reset()
     
     pbar = tqdm(total=n_episodes, desc="Battling")
-    
-    while episodes_completed < n_episodes:
-        action, _ = model.predict(obs, deterministic=True)
-        
-        obs, rewards, dones, infos = env.step(action)
-        
-        for i, done in enumerate(dones):
-            if done:
-                is_win = infos[i].get("battle_won", False)
-                
-                if is_win:
-                    wins += 1
+    with torch.no_grad():
+        while episodes_completed < n_episodes:
+            action, _ = model.predict(obs, deterministic=True)
+            
+            obs, rewards, dones, infos = env.step(action)
+            
+            for i, done in enumerate(dones):
+                if done:
+                    is_win = infos[i].get("battle_won", False)
                     
-                episodes_completed += 1
-                pbar.update(1)
-                
-                current_wr = wins / episodes_completed
-                pbar.set_postfix({"Win Rate": f"{current_wr:.1%}"})
+                    if is_win:
+                        wins += 1
+                        
+                    episodes_completed += 1
+                    pbar.update(1)
+                    
+                    current_wr = wins / episodes_completed
+                    pbar.set_postfix({"Win Rate": f"{current_wr:.1%}"})
 
-                if episodes_completed >= n_episodes:
-                    break
-    
-    pbar.close()
+                    if episodes_completed >= n_episodes:
+                        break
+        
+        pbar.close()
     
     final_wr = wins / episodes_completed
     print("\n" + "="*40)

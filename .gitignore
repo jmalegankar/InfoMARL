@@ -14,3 +14,5 @@ cpm/
 *.log
 *.csv
 *.json
+baselines/
+eval_data*/
